@@ -1,22 +1,25 @@
 <script lang="ts">
   /**
-   * "Best match rescales the transfer functions" — the confirm prompt in
-   * front of `actions.calcBestMatch`.
+   * "Best match onto <reference>" — the confirm prompt in front of
+   * `actions.calcBestMatch`.
    *
-   * WHY IT EXISTS. Best Match is relative scaling: it stores, per TF line, the
-   * factor that brings each TF onto the reference's displayed level, as that
-   * line's TRANSFER-FUNCTION calibration (Calibrate's "Transfer function"
-   * section). The sensor calibrations are untouched, but whatever TF factor a
-   * set showed before — a free-mass calibration, an earlier Best Match, or the
-   * ratio its channel calibration implied — is replaced. Nothing in the
-   * toolbar button suggests that, hence this.
+   * WHY IT EXISTS. Best Match is relative scaling: it stores, per rescaled TF
+   * line, the factor that brings that line onto the reference's displayed
+   * level, as its TRANSFER-FUNCTION calibration (Calibrate's "Transfer
+   * function" section). The reference line and every sensor calibration are
+   * untouched, but whatever factor a RESCALED line showed before — a
+   * free-mass calibration, an earlier Best Match, or the ratio its channel
+   * calibration implied — is replaced. Nothing in the toolbar button suggests
+   * that, hence this.
    *
-   * The wording adapts to what is actually at stake. With `calibrated` empty
-   * every set is still raw, nothing is lost and this reads as a plain
-   * confirmation; with sets listed it names them and says what will happen to
-   * them. Either way the action is Undo-able from the result toast — the text
-   * says so, because a reversible action people know is reversible is one they
-   * can try.
+   * IT IS ONLY RAISED WHEN SOMETHING IS AT STAKE: `calcBestMatch` asks only
+   * when a rescaled line shows a factor other than 1 today, so `calibrated`
+   * is normally non-empty. The prompt names the reference and says it stays as
+   * it is (before 2026-11 it read as if the reference's own factor would be
+   * replaced), names the cards that are rescaled, and says which of them lose
+   * a calibrated level. The action is Undo-able from the result toast — the
+   * text says so, because a reversible action people know is reversible is one
+   * they can try.
    *
    * DISMISSAL IS CANCEL (unlike `SonoIncludeDialog`, where dismissal means
    * "don't include" and the save proceeds): nothing has been committed at this
@@ -25,19 +28,21 @@
    * DUMB component: it renders the names it is given and reports yes/no.
    */
   let {
+    reference,
     names,
     calibrated,
     onchoose,
   }: {
-    /** Display names of every set Best Match would rescale. */
+    /** The reference TF line, named as the "ref TF" picker names it. */
+    reference: string;
+    /** Display names of every card Best Match would rescale. */
     names: string[];
-    /** Those with a non-identity calibration today — what stands to be lost. */
+    /** Those with a calibrated level today — what stands to be replaced. */
     calibrated: string[];
     /** The answer; dismissal reports `false`. */
     onchoose: (ok: boolean) => void;
   } = $props();
 
-  const atRisk = $derived(calibrated.length > 0);
   const many = $derived(calibrated.length > 1);
 
   /** The default button, focused on mount so Enter confirms. */
@@ -64,37 +69,32 @@
   data-testid="best-match-confirm-overlay"
   role="dialog"
   aria-modal="true"
-  aria-label="Best match rescales the transfer functions"
+  aria-label="Best match onto {reference}"
   tabindex="-1"
   onclick={(e) => { if (e.target === e.currentTarget) onchoose(false); }}
 >
   <div class="modal">
-    <div class="modal-title">Best match rescales the transfer functions</div>
+    <div class="modal-title">Best match onto <span class="names">{reference}</span></div>
 
-    <p class="body">
-      Best match rescales {names.length === 1 ? 'this measurement' : `these ${names.length} measurements`}
-      onto the reference, and stores the result <em>as each transfer
-      function's calibration factor</em> — the one in Calibrate's
-      Transfer function section. Sensor calibrations are not changed.
+    <p class="body" data-testid="best-match-confirm-reference">
+      The reference, <span class="names">{reference}</span>, stays as it is.
+      Best match rescales <span class="names">{names.join(', ')}</span> onto
+      it, and stores each result <em>as that transfer function's calibration
+      factor</em>, the one in Calibrate's Transfer function section. Sensor
+      calibrations are not changed.
     </p>
 
-    {#if atRisk}
+    {#if calibrated.length > 0}
       <p class="body warn" data-testid="best-match-confirm-risk">
-        {many ? 'These show' : 'This shows'} a calibrated transfer function now,
-        so {many ? 'their' : 'its'} current factor will be replaced:
-        <span class="names">{calibrated.join(', ')}</span>.
-        The rescaled lines take the reference's units.
-      </p>
-    {:else}
-      <p class="note" data-testid="best-match-confirm-norisk">
-        No transfer function here is calibrated yet, so there is nothing to
-        lose.
+        <span class="names">{calibrated.join(', ')}</span>
+        {many ? 'show' : 'shows'} a calibrated level now, which will be
+        replaced. The rescaled lines take the reference's units.
       </p>
     {/if}
 
     <p class="note">
-      You can put {atRisk ? 'the old values' : 'this'} back with Undo on the
-      toast, or by editing the transfer function in Calibrate.
+      You can put the old values back with Undo on the result message, or by
+      editing the transfer function in Calibrate.
     </p>
 
     <div class="mrow end">
@@ -150,6 +150,10 @@
   .names {
     font-family: var(--font-mono);
     font-size: 11.5px;
+    overflow-wrap: anywhere;
+  }
+  .modal-title .names {
+    font-size: 13px;
   }
   .note {
     font-size: 11.5px;

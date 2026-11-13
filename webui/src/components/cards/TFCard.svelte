@@ -28,6 +28,7 @@
   import ResolutionControl from '../ResolutionControl.svelte';
   import BestMatchConfirmDialog from '../BestMatchConfirmDialog.svelte';
   import type { BestMatchInfo } from '../../lib/analysis/actions';
+  import { bestMatchRefs } from '../../lib/analysis/bestMatchRefs';
 
   let {
     viewState,
@@ -141,10 +142,6 @@
   // writes relative factors through the existing calibration path.
   /** Representative x(iω) power for the current target (rep set for 'all'). */
   const iwPower = $derived(repId != null ? ($derivedStore[repId]?.iwPower ?? 0) : 0);
-  /** Any TF-bearing set exists → Best Match + the scaling group are meaningful. */
-  const anyTf = $derived(
-    Object.values($derivedStore).some((s) => s?.tf && (s.tf.data.shape[1] ?? 0) > 0),
-  );
   const IW_POWERS = [-2, -1, 0, 1, 2];
   /** Set the x(iω) power for the target ('all' → every data set). */
   function setIw(p: number) {
@@ -152,8 +149,25 @@
     else if (repId != null) actions.setIwPower(repId, p);
   }
 
-  /** Best-Match reference channel (a source channel of the reference set). */
-  let refCh = $state(1);
+  /**
+   * Best Match's reference: a TF LINE, offered by the name of its data card
+   * as the tray shows it (`bestMatchRefs` — the card alone, or `card ·
+   * out/in` when the card has several TF lines). Deliberately independent of
+   * the dataset dropdown, which used to pick the reference set unseen. Data
+   * sets only (`setsView`), in tray order.
+   */
+  const channelLabel = $derived(selection.channelLabel);
+  const refOpts = $derived(bestMatchRefs(
+    $setsView,
+    (id) => {
+      const t = $derivedStore[id]?.tf;
+      return t ? { chIn: t.chIn, nCols: t.data.shape[1] ?? 0 } : undefined;
+    },
+    $channelLabel,
+  ));
+  /** The picked line's key; a key no longer offered falls back to the first. */
+  let refKey = $state('');
+  const refSel = $derived(refOpts.find((o) => o.key === refKey) ?? refOpts[0]);
 
   /**
    * Live confirm prompt for Best Match. Non-null while the dialog is open;
@@ -176,10 +190,10 @@
   }
 
   function bestMatch() {
-    if (repId == null) return;
-    // Gated: Best Match replaces each set's transfer-function calibration
-    // (whatever factor its TF displayed with) — see `calcBestMatch`.
-    actions.calcBestMatch(repId, refCh, $sharedFreq ?? null, askBestMatch);
+    if (!refSel) return;
+    // Asks first only when a rescaled line has a calibrated level to lose —
+    // see `calcBestMatch`.
+    actions.calcBestMatch(refSel.setId, refSel.ch, $sharedFreq ?? null, askBestMatch);
   }
 </script>
 
@@ -291,15 +305,20 @@
               <option value={String(p)}>{p > 0 ? `+${p}` : p}</option>
             {/each}
           </select>
-          <span class="ml">ref ch</span>
-          <select bind:value={refCh} style="width:64px" aria-label="best-match reference channel"
-            data-testid="best-match-ref">
-            {#each Array.from({ length: Math.max(1, maxChannels) }, (_, c) => c) as c (c)}
-              <option value={c}>ch_{c}</option>
+          <span class="ml" title="the transfer function the others are rescaled onto; it is not changed">ref TF</span>
+          <select value={refSel?.key ?? ''} onchange={(e) => { refKey = e.currentTarget.value; }}
+            class="ref-tf" disabled={refOpts.length === 0} title={refSel?.label ?? ''}
+            aria-label="best-match reference transfer function" data-testid="best-match-ref">
+            {#if refOpts.length === 0}<option value="">no TF yet</option>{/if}
+            {#each refOpts as o (o.key)}
+              <option value={o.key}>{o.label}</option>
             {/each}
           </select>
-          <button class="btn sm" disabled={$busy || !anyTf} onclick={bestMatch}
-            data-testid="best-match" title="rescale every TF to best match the reference channel over the visible window">
+          <button class="btn sm" disabled={$busy || !refSel} onclick={bestMatch}
+            data-testid="best-match"
+            title={refSel
+              ? `rescale every other TF onto ${refSel.label} over the visible window`
+              : 'Calc TF first'}>
             Best match
           </button>
         </div>
@@ -316,6 +335,7 @@
 
 {#if bmAsk}
   <BestMatchConfirmDialog
+    reference={bmAsk.info.reference}
     names={bmAsk.info.names}
     calibrated={bmAsk.info.calibrated}
     onchoose={answerBestMatch}
@@ -325,5 +345,10 @@
 <style>
   .grp.dim .grp-ctl > *:not(.switch) {
     opacity: 0.55;
+  }
+  /* Card names can be long; the full name is in the title. */
+  .ref-tf {
+    max-width: 190px;
+    text-overflow: ellipsis;
   }
 </style>
