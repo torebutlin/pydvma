@@ -61,7 +61,7 @@ import type {
 } from '../stores/damping';
 import type { Toasts } from '../stores/toast';
 import {
-  capturedInVolts, channelRail, composeTfUnit, isIdentity, normalizeFactors, normalizeTfCal, normalizeUnits,
+  capturedInVolts, channelRail, composeTfUnit, normalizeFactors, normalizeTfCal, normalizeUnits,
   DEFAULT_UNIT, factorToSensitivity, provenanceFromSet, sensitivityToFactor, splitTfUnit, tfCalLine,
   tfCalToUi, wrapUnit, type ChannelCalibration, type TfCal, type TfCalLine,
 } from '../model/calibration';
@@ -70,7 +70,8 @@ import {
 } from '../stores/carriedCal';
 import type { ChoosableKind, ChoosableSet } from '../export/data';
 import { calibrationController } from '../stores/calibrationController';
-import { tfColumn } from '../plot/tfChannels';
+import { tfColumn, tfLineLabel } from '../plot/tfChannels';
+import { tfLineName } from './bestMatchRefs';
 import { fromNFrames, fromNFft } from './resolution';
 
 /** Clamp an x(iω) display power to an integer in [-2, +2] (0 = identity). */
@@ -206,19 +207,28 @@ export type SonoSaveChoice = 'channel' | 'all' | 'none';
 /**
  * What the Best Match confirm prompt is told about the action it is gating.
  *
- * Best Match writes its relative scaling into each set's TRANSFER-FUNCTION
- * calibration (`TfCal`), replacing whatever TF factor the set displayed
- * before — a free-mass calibration, an earlier Best Match, or the ratio its
- * channel calibration implied. The channel (transducer) calibrations are
- * never touched. `calibrated` names the sets that actually have something to
- * lose — any TF line whose displayed factor is not 1 today; it is a SUBSET of
- * `names`, and empty when every set is still raw, which is the ordinary case
- * where the prompt is a formality.
+ * Best Match writes its relative scaling into each RESCALED line's
+ * TRANSFER-FUNCTION calibration (`TfCal`), replacing whatever TF factor that
+ * line displayed before — a free-mass calibration, an earlier Best Match, or
+ * the ratio its channel calibration implied. The reference line itself is
+ * never rescaled, and the channel (transducer) calibrations are never
+ * touched. `calibrated` names the cards that actually have something to lose
+ * — a rescaled line whose displayed factor is not 1 today; it is a SUBSET of
+ * `names`. `calcBestMatch` only asks when it is non-empty.
  */
 export interface BestMatchInfo {
-  /** Display names of every set Best Match will rescale. */
+  /**
+   * The reference TF line, named as the TF card's "ref TF" picker names it
+   * (`bestMatchRefs`): the card alone, or `card · out/in` when the card has
+   * several TF lines. It stays as it is.
+   */
+  reference: string;
+  /**
+   * Display names of every card Best Match will rescale. The reference card
+   * appears only when it has OTHER TF lines, as `card (other lines)`.
+   */
   names: string[];
-  /** Those of `names` whose calibration is non-identity and will be replaced. */
+  /** Those of `names` with a rescaled line whose factor is not 1 today. */
   calibrated: string[];
 }
 
@@ -3301,15 +3311,22 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   /**
    * Best Match relative scaling (round-6 Qt-parity — Qt's `analysis.best_match`
-   * + `set_calibration_factors_all`). Rescales EVERY TF-bearing set's output
-   * columns to best match ONE reference column of set `refSetId` over
-   * `freqRange` (the committed shared frequency window; `null` = each set's full
-   * band), and stores the result as each line's TRANSFER-FUNCTION calibration
+   * + `set_calibration_factors_all`). Rescales every TF line of every
+   * TF-bearing data set, shown or hidden, to best match ONE reference line —
+   * source channel `refChannel` of set `refSetId` — over `freqRange` (the
+   * committed shared frequency window; `null` = each set's full band), and
+   * stores the result as each rescaled line's TRANSFER-FUNCTION calibration
    * (`setTfCalibration`) — display-time, `.dvma`-persisted, Undo-able, and
    * visible/editable in the Calibrate dialog's transfer-function section.
    *
-   * `refChannel` is a SOURCE channel of the reference set; it maps to its TF
-   * output column (falling back to column 0 if it names the input channel).
+   * The reference is a TF line as the TF card's "ref TF" picker offers it
+   * (`bestMatchRefs`): `refChannel` is that line's SOURCE channel. A channel
+   * with no TF line (the input) falls back to column 0, for headless callers.
+   * THE REFERENCE LINE IS NEVER WRITTEN: it keeps exactly the state it had
+   * (a TF factor, or the ratio its channel calibration implies), so the
+   * reference card is rescaled only when it has other TF lines. With nothing
+   * but the reference to rescale it says so and stops, without the engine.
+   *
    * The match is against the reference AS DISPLAYED: each line's new factor is
    * `refFactor × f`, where `refFactor` is the factor the reference line shows
    * with (its own TF calibration — 3C6's free-mass factor on the hammer set —
@@ -3325,15 +3342,18 @@ export function createActions(engine: EngineStore, selection: Selection, setting
    * displayed ratio.) An orphan TF set (TF-only file) has no channel
    * calibration under its TF factors, so `setTfCalibration` writes those.
    *
-   * IT REPLACES WHAT EACH SET DISPLAYED, SO IT ASKS FIRST: `confirm` is given
-   * the sets involved and which of them show a non-identity TF factor today
-   * (`BestMatchInfo`), and can refuse. `confirm` is INJECTED rather than
-   * imported so this layer stays UI-free and headless callers keep working;
-   * omitting it proceeds, as before.
+   * IT REPLACES WHAT A RESCALED LINE DISPLAYED, SO IT ASKS WHEN THAT LOSES
+   * SOMETHING: when any rescaled line shows a factor other than 1 today,
+   * `confirm` is given the reference, the cards it rescales and which of them
+   * have such a line (`BestMatchInfo`), and can refuse. When nothing rescaled
+   * is calibrated there is nothing to lose and it does not ask. `confirm` is
+   * INJECTED rather than imported so this layer stays UI-free and headless
+   * callers keep working; omitting it proceeds, as before.
    *
    * Every rescaled set's previous TF calibration (and, for an orphan, its
-   * stored factors and units) is snapshotted, and the result toast carries an
-   * Undo that puts all of them back.
+   * stored factors and units) is snapshotted, and the result toast —
+   * `Best match onto <reference>: <card> ×f, ...`, the reference left out —
+   * carries an Undo that puts all of them back.
    */
   async function calcBestMatch(
     refSetId: number, refChannel: number, freqRange: [number, number] | null = null,
@@ -3349,20 +3369,42 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     const refSpec = specs[refIdx];
     // Reference OUTPUT column from the chosen source channel (input → column 0).
     const refCol = tfColumn(refChannel, refSpec.chIn, refSpec.nChannels) ?? 0;
+    const refSrc = sourceOfColumn(refCol, refSpec.chIn, refSpec.nChannels);
     // ...and what that line DISPLAYS: the level and unit every match lands on.
-    const refState = tfLineState(
-      refSpec.ws.setId, sourceOfColumn(refCol, refSpec.chIn, refSpec.nChannels), refSpec.chIn);
+    const refState = tfLineState(refSpec.ws.setId, refSrc, refSpec.chIn);
     const refFactor = refState.override ? refState.override.factor : refState.ratio;
+
+    // Names as the "ref TF" picker gives them (`bestMatchRefs`).
+    const labelOf = get(selection.channelLabel);
+    const refName = tfLineName(
+      nameOf(refSpec.ws.setId), refSrc, refSpec.chIn, refSpec.nCols, labelOf, refSpec.ws.setId);
+    /** The lines (source channels) rescaled in `s`: all but the reference line. */
+    const rescaled = (s: FitSpec): number[] =>
+      (s === refSpec ? s.chans.filter((ch) => ch !== refSrc) : s.chans);
+    /** A card as the prompt lists it; the reference card only for its other lines. */
+    const cardName = (s: FitSpec): string =>
+      (s === refSpec ? `${nameOf(s.ws.setId)} (other lines)` : nameOf(s.ws.setId));
+    const targets = specs.filter((s) => rescaled(s).length > 0);
+    if (targets.length === 0) {
+      toasts?.push(
+        `Best match has nothing to rescale onto ${refName}: it is the only transfer function. `
+          + 'Calc TF on another set first.',
+        { level: 'info' },
+      );
+      return;
+    }
 
     if (confirm) {
       // Named BEFORE the engine call so a refusal costs nothing. "Calibrated"
-      // = any TF line whose displayed factor is not 1 today — those are the
-      // ones with something to lose.
-      const names = specs.map((s) => nameOf(s.ws.setId));
-      const calibrated = specs
-        .filter((s) => !isIdentity(s.chans.map((ch) => tfLineFactor(s.ws.setId, ch, s.chIn))))
-        .map((s) => nameOf(s.ws.setId));
-      if (!(await confirm({ names, calibrated }))) return;
+      // = a RESCALED line whose displayed factor is not 1 today — the only
+      // ones with something to lose (the reference line is never written).
+      const calibrated = targets
+        .filter((s) => rescaled(s).some((ch) => tfLineFactor(s.ws.setId, ch, s.chIn) !== 1))
+        .map(cardName);
+      if (calibrated.length > 0
+        && !(await confirm({ reference: refName, names: targets.map(cardName), calibrated }))) {
+        return;
+      }
     }
 
     engine.boot();
@@ -3396,33 +3438,47 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       const before: { setId: number; factors: number[]; units: string[]; tfCal: TfCal | null }[] = [];
       specs.forEach((s, i) => {
         const facs = factorList[i];
-        if (!facs) return;
+        const want = rescaled(s);
+        if (!facs || want.length === 0) return;
         const cur = getCalibration(s.ws.setId);
         const lines: (TfCalLine | null)[] = new Array(s.ws.nChannels).fill(null);
-        // Keep any TF calibration on lines this run does not rescale.
+        // Keep any TF calibration on lines this run does not rescale — the
+        // reference line among them.
         const prev = get(derived)[s.ws.setId]?.tfCal ?? null;
         if (prev && prev.chIn === s.chIn) prev.lines.forEach((l, ch) => { lines[ch] = l; });
-        for (let c = 0; c < s.nCols; c++) {
-          const sc = sourceOfColumn(c, s.chIn, s.nChannels);
-          const f = facs[c];
-          if (sc >= 0 && sc < lines.length && Number.isFinite(f) && f !== 0) {
-            lines[sc] = { factor: refFactor * f, num: refState.num, den: refState.den };
-          }
-        }
+        const applied: { line: string; times: string }[] = [];
+        // Factor k belongs to payload column k, i.e. column `s.cols[k]` of
+        // source channel `s.chans[k]`.
+        s.chans.forEach((sc, k) => {
+          const f = facs[k];
+          if (!want.includes(sc) || sc < 0 || sc >= lines.length) return;
+          if (!Number.isFinite(f) || f === 0) return;
+          lines[sc] = { factor: refFactor * f, num: refState.num, den: refState.den };
+          applied.push({
+            line: s.chIn === null ? labelOf(s.ws.setId, sc) : tfLineLabel(s.ws.setId, sc, s.chIn, labelOf),
+            times: `×${f.toPrecision(3)}`,
+          });
+        });
+        if (applied.length === 0) return;
         before.push({
           setId: s.ws.setId, factors: cur.factors.slice(), units: cur.units.slice(), tfCal: prev,
         });
         // `warnFit: false` — a Best Match touches every set at once, so the
         // stale-fit warning is raised ONCE below rather than per set.
         setTfCalibration(s.ws.setId, lines, { warnFit: false });
-        // Report the reference column's factor per set as the headline number.
-        const head = facs[Math.min(refCol, facs.length - 1)];
-        summary.push(`${nameOf(s.ws.setId)} ×${Number.isFinite(head) ? head.toPrecision(3) : '1'}`);
+        // A card with one TF line: "card ×f". With several, name the lines,
+        // as the "ref TF" picker does: "card (out/in ×f, out/in ×g)".
+        const name = nameOf(s.ws.setId);
+        summary.push(s.chans.length === 1
+          ? `${name} ${applied[0].times}`
+          : `${name} (${applied.map((a) => `${a.line} ${a.times}`).join(', ')})`);
       });
       toasts?.push(
-        `Best match → ${nameOf(refSpec.ws.setId)}: ${summary.join(', ')}`,
+        summary.length
+          ? `Best match onto ${refName}: ${summary.join(', ')}`
+          : `Best match found no factor onto ${refName}; nothing was changed.`,
         {
-          level: 'success',
+          level: summary.length ? 'success' : 'info',
           actions: before.length
             ? [{
               label: '↶ Undo',

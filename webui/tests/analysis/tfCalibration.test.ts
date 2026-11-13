@@ -333,13 +333,16 @@ test('Best Match aims at a channel-calibrated reference correctly', async () => 
 
 test('the Best Match prompt names the sets whose TF calibration is replaced', async () => {
   const { actions, a, b } = await twoSets();
-  let info: { names: string[]; calibrated: string[] } | null = null;
+  let info: { reference: string; names: string[]; calibrated: string[] } | null = null;
+  // A calibrated REFERENCE has nothing at stake: no prompt.
+  actions.setTfCalibration(a, [null, line(7)]);
   await actions.calcBestMatch(a, 1, null, (i) => { info = i; return false; });
-  expect(info!.calibrated).toEqual([]);
+  expect(info).toBeNull();
 
+  // ...and it ran, so B now carries a factor that a second run would replace.
   actions.setTfCalibration(b, [null, line(7)]);
   await actions.calcBestMatch(a, 1, null, (i) => { info = i; return false; });
-  expect(info!.calibrated).toEqual(['B']);
+  expect(info).toEqual({ reference: 'A', names: ['B'], calibrated: ['B'] });
   // A refusal changes nothing.
   expect(get(actions.derived)[b].tfCal).toEqual({ chIn: 0, lines: [null, line(7)] });
 });

@@ -50,8 +50,11 @@ const fitResult = () => ({
   recon_freq_axis: real([2], [60, 110]), recon_tf_data: cplx([2, 1], [1, 0, 1, 0]),
   global_freq_axis: real([2], [0, 1]), global_tf_data: cplx([2, 1], [0.5, 0, 0.5, 0]),
 });
-/** `calc_best_match` returns one factor array per set, one entry per column. */
-const bestMatchResult = () => ({ factors: [real([1], [3])] });
+/**
+ * `calc_best_match` returns one factor array per set, one entry per column
+ * (two sets here: the reference matches itself at 1).
+ */
+const bestMatchResult = () => ({ factors: [real([1], [1]), real([1], [3])] });
 
 function harness() {
   const engine = {
@@ -126,12 +129,13 @@ test('a calibration on an UNFITTED set is silent', async () => {
 
 test('best match raises ONE warning for the whole run, and its Undo raises none', async () => {
   const { actions, toasts } = harness();
-  actions.loadDataset(makeDataset());
+  actions.loadDataset(makeDataset(2));
   await actions.calcTf('all');
-  const setId = actions.workingSets()[0].setId;
-  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  const [a, b] = actions.workingSets().map((w) => w.setId);
+  await actions.calcFit(b, [60, 110], 'acc', 'fit', 1);
 
-  await actions.calcBestMatch(setId, 1, null, () => true);
+  // a is the reference (never rescaled); b, the fitted set, is rescaled.
+  await actions.calcBestMatch(a, 1, null, () => true);
   expect(staleWarnings(toasts)).toHaveLength(1);
 
   // Undo puts the fit back in the units it was made in — nothing to warn about.
