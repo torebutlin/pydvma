@@ -236,23 +236,26 @@ of full scale an uncalibrated axis reads just `Amplitude`.
 
 ## Best match sets the transfer function calibration
 
-The **TF** stage's **Best match** rescales every transfer function onto
-a reference channel (see
+The **TF** stage's **Best match** rescales every other transfer function
+onto the reference you choose in **ref TF** (see
 [Scaling: x(iω) and Best Match](analysis.md#scaling-xi-and-best-match)).
 It matches the reference as displayed, including any transfer function
 factor, so other measurements land on a calibrated reference's level.
-Calibrate one measurement directly, choose it as the reference, and Best
-match brings the rest onto it.
+Calibrate one measurement directly, choose its card as the reference,
+and Best match brings the rest onto it. The reference keeps its factor:
+Best match never changes it.
 
-The results are stored as each line's
+The results are stored as each rescaled line's
 [transfer function factor](#calibrate-a-transfer-function-directly), so
 they show in this dialog afterwards, and each rescaled line takes the
 reference's unit. Channel calibrations are never changed, so time and
 spectrum views stay as they were.
 
-A transfer function that already reads at a calibrated level, from a
-factor or from its channels, has that level replaced. So Best match
-asks first, naming those measurements, and its result message has an
+A rescaled transfer function that already reads at a calibrated level,
+from a factor or from its channels, has that level replaced. So when
+there is one, Best match asks first, naming the reference and those
+measurements. When nothing it rescales is calibrated there is nothing
+to lose, and it runs without asking. Its result message has an
 **Undo** that puts the previous factors back.
 
 ## Soundcard input gain and full scale

@@ -3,6 +3,25 @@
 All notable changes to pydvma are documented here. This project
 follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- **Best Match takes its reference by card.** The TF card's **ref ch**
+  (a channel of whichever set the dataset list showed, never named) is
+  now **ref TF**, which lists the transfer functions by the name of
+  their data card in the tray (`card · ch_2/ch_0` when a card has
+  several). The reference is never changed: it used to be rewritten with
+  its own factor, which also turned a TF that followed its channel
+  calibration into one with a fixed factor.
+- Best Match asks first only when a transfer function it rescales
+  already reads at a calibrated level. The prompt names the reference
+  and says it stays as it is; it used to say the reference's own
+  factor would be replaced. The result message reads
+  `Best match onto <reference>: <card> ×f` and no longer lists the
+  reference's ×1. With only the reference loaded it says there is
+  nothing to rescale.
+
 ## 2.9.1 — 2026-11-09
 
 Two small changes to the web app: the stage tabs follow the order of a

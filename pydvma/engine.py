@@ -625,14 +625,14 @@ def calc_best_match(sets, freq_range=None, set_ref=0, ch_ref=0):
     and its reference OUTPUT column.
 
     Returns ``{'factors': [<per-column array>, ...]}`` — one marshalled real
-    array of per-column factors per set, in ``sets`` order. The JS side
-    (``actions.calcBestMatch``) folds each column's factor into the SOURCE
-    channel's ``channel_cal_factors`` through the existing calibration path
-    (display-time ``cal[out]/cal[in]`` scaling + ``.dvma`` persistence), so
-    Best Match is Undo-able by resetting calibration and the factors stay
-    visible/editable in the Calibrate dialog — the pragmatic webui adaptation of
-    Qt's ``set_calibration_factors_all`` (Qt stores the factor per TF column;
-    the webui stores it per source channel).
+    array of per-column factors per set, in ``sets`` order (the reference
+    column's own factor is 1). The JS side (``actions.calcBestMatch``) stores
+    each RESCALED line's factor, times the factor the reference line displays
+    with, as that line's transfer-function calibration (its ``TfCal``, saved
+    in the ``.dvma`` and shown in the Calibrate dialog's Transfer function
+    section), leaves the reference line and every channel calibration as they
+    were, and offers an Undo. That is the webui's version of Qt's
+    ``set_calibration_factors_all``, which replaced the channel factors.
     """
     tfs = []
     for s in sets:

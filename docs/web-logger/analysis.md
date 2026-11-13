@@ -173,18 +173,24 @@ The **scaling** group on the TF card holds two tools.
     the measured values and its own **TF type**: the fitted frequencies,
     damping and modal constants do not depend on the power you view.
 
-- **Best match** rescales every TF so that the sets best overlay one
-  reference channel over the frequency window you are showing. Choose
-  the channel in **ref ch** (a channel of the highlighted set), then
-  press **Best match**. It uses every channel of every set, whether or
-  not the lines are showing. A message reports the factors it applied.
+- **Best match** rescales every other TF onto one reference TF over the
+  frequency window you are showing, so the sets overlay. Choose the
+  reference in **ref TF**, which lists the transfer functions by the
+  name of their data card in the tray (a card with several TF lines
+  lists each, as `card · ch_2/ch_0`), then press **Best match**. The
+  reference itself is not changed. Every other TF line of every set is
+  rescaled, whether or not it is showing, including the reference
+  card's other lines. A message such as
+  `Best match onto hammer: noise ×0.42` reports the factors it applied.
 
     It matches the reference as displayed, calibration included, and
     stores each result as that line's
     [transfer function factor](calibration.md#calibrate-a-transfer-function-directly),
-    with the reference's unit. Channel calibrations are left alone. It
-    asks before it runs, naming the measurements whose calibrated level
-    it would replace, and the message that follows offers **Undo**. See
+    with the reference's unit. Channel calibrations are left alone. When
+    a line it would rescale already reads at a calibrated level, it asks
+    first, naming the reference and the measurements whose level it
+    would replace; otherwise it just runs. Either way the message that
+    follows offers **Undo**. See
     [Best match sets the transfer function calibration](calibration.md#best-match-sets-the-transfer-function-calibration).
 
 !!! note "Nyquist and Bode plots"

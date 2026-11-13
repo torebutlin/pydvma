@@ -387,11 +387,10 @@ was added 2026-09-29.
   members share a calibration, misleading when they do not. Tied to the
   already-deferred ensemble-TF materialisation (the derived-data item
   below), so best done with it.
-- **W3. No e2e coverage for the Best Match prompt.** The confirm dialog
-  and its Undo are covered by vitest against the actions layer
-  (`tests/analysis/bestMatch.test.ts`) and by typecheck, but no
-  Playwright spec drives the real dialog. Worth one when the
-  freq-nav/bridge specs are next touched.
+- ~~**W3. No e2e coverage for the Best Match prompt.**~~ **DONE**
+  2026-11-13: `e2e/best-match.spec.ts` (@engine) drives the "ref TF"
+  picker and the real prompt, from Tore's report that the prompt said the
+  reference's own factor would be replaced.
 - **W4. App and Python resolve a TF's export calibration from different
   places** (found 2026-09-29, closing the app's missing `.mat` keys).
   Both data exports (CSV header, `.mat` `tf_cal_factors` / `tf_units`)
