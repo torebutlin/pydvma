@@ -28,9 +28,32 @@ Suites: pytest 1668/7, vitest 1488/1, check 0/0, damping Playwright 2/2
 @engine, mkdocs --strict clean. vibration_apps reverb reviewed: no bug
 (22 decay tests pass); its crossover line stops at the first block within
 10 dB of the floor, so a deep beat can end it early (Lundeby would
-iterate). **Also in flight: publication-quality Save Figure** — design
-`dev/plans/2026-11-24-publication-figure-design.md` (approved), plan
-`…-plan.md` (written in its own session); not implemented yet.
+iterate).
+
+Same day, later (Mac; committed, NOT pushed; CHANGELOG `## Unreleased`):
+**Save Figure writes publication figures** — design
+`dev/plans/2026-11-24-publication-figure-design.md`, plan `…-plan.md`,
+mockups `dev/mockups/2026-11-24-publication-figure/`; built subagent-driven
+(10 tasks, each reviewed, plus a whole-change review). A pure print renderer
+(`webui/src/lib/export/printFigure.ts`, shared writers `printSvg.ts`, legend
+`legendOverlay.ts`) re-lays the SAME `PlotModel`s through `buildPlot` in
+quarter-point units: STIX Two Text subset renamed `Pydvma Figure Serif`
+(`webui/scripts/subset-figure-font.py`, OFL) at 10 pt labels / 9 pt numbers
+and legend, laid out for a printed width (Export stage, 160 mm default,
+picks 90/140/160/190), shape per type (16:9, Bode 4:3 two panes 60/40,
+Nyquist 1:1), taller only when labels or a below-axes legend need it
+(`grownFor`). Legend inside the axes (presets, 'best' corner, else below).
+PNG 600 dpi with pHYs (160 mm → 3780 px); PDF vector, font embedded (jsPDF
+names it `Pydvma Figure Serif`). Damping charts save the same way
+(`dampingFigure.ts`; the EDC marks each band's cut). On screen the legend
+presets sit inside the axes frame (8 px; a drag may use the margins) and
+the coherence label is no longer cropped. The screen-SVG export path is
+gone. NB the PNG test of the embedded face needs a probe: macOS ships STIX
+Two Text, so a failed `@font-face` would look identical (swap the bundled
+TTF for Courier and check the PNG changes). Verified Chromium + Safari
+27.2; Firefox not installed. Suites: check 0/0, vitest 1544/1, Playwright
+BRIDGE_E2E 150/0 (+38 after the review fixes), mkdocs --strict clean.
+Follow-ups in TODO.md "Publication figure follow-ups".
 
 **v2.9.1 IS RELEASED END TO END (2026-11-09, Mac).** Patch, two web-app
 changes: the stage tabs follow a measurement's order (Setup, Live,
