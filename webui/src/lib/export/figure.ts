@@ -18,6 +18,10 @@
 // exportPdf are browser-only (canvas / jsPDF) and are proven by the LIVE
 // SMOKE in the e2e, not by node tests.
 import { CHROME, PRINT_CHROME } from '../plot/chrome';
+import { FIGURE_FONT_FAMILY, loadFigureFontBase64 } from './figureFont';
+import type { FigureFormat } from './figureSave';
+import { withPngDpi } from './pngDpi';
+import type { PrintFigure } from './printFigure';
 
 /** Background treatment for an exported figure. */
 export type BackgroundMode = 'white' | 'transparent' | 'dark';
@@ -291,4 +295,84 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('toBlob returned null'))), 'image/png');
   });
+}
+
+/**
+ * Put an `@font-face` for the figure family (the TTF as a base64 data URL)
+ * in a `<style>` right after the root tag, so an `<img>`-loaded SVG, which
+ * cannot reach the page's fonts, draws with the embedded face.
+ */
+export function withEmbeddedFont(svg: string, fontBase64: string): string {
+  const style =
+    `<style>@font-face{font-family:'${FIGURE_FONT_FAMILY}';` +
+    `src:url(data:font/ttf;base64,${fontBase64}) format('truetype')}</style>`;
+  return svg.replace(/<svg\b[^>]*>/, (root) => root + style);
+}
+
+/**
+ * Rasterise a print figure to PNG bytes at `dpi` (default 600; 600 dpi is
+ * 23622 px/m). The canvas is `round(widthPt / 72 * dpi)` by
+ * `round(heightPt / 72 * dpi)`, so the figure's printed size in points is
+ * exact; the resolution is stamped in a `pHYs` chunk. 'white' and 'dark' are
+ * pre-filled, 'transparent' is left clear. The font is embedded in the SVG
+ * and decoded before drawing. Browser-only.
+ */
+export async function exportPrintPng(fig: PrintFigure, mode: BackgroundMode, dpi = 600): Promise<Uint8Array> {
+  const prepared = withEmbeddedFont(prepareSvg(fig.svg, mode), await loadFigureFontBase64());
+  const url = URL.createObjectURL(new Blob([prepared], { type: 'image/svg+xml' }));
+  try {
+    const img = await loadImage(url);
+    await img.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round((fig.widthPt / 72) * dpi));
+    canvas.height = Math.max(1, Math.round((fig.heightPt / 72) * dpi));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2d canvas context unavailable');
+    if (mode !== 'transparent') {
+      ctx.fillStyle = mode === 'dark' ? DARK_BG : '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await canvasToBlob(canvas);
+    return withPngDpi(new Uint8Array(await blob.arrayBuffer()), dpi);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * Vectorise a print figure to PDF bytes. The page is the figure's size in
+ * points (`widthPt` by `heightPt`). The figure font is registered with jsPDF
+ * under `FIGURE_FONT_FAMILY`; svg2pdf.js parses each `font-family` list and
+ * takes the first name jsPDF's `getFontList()` knows, so the stack's first
+ * entry maps to the registered font and the PDF embeds it (no `<style>`
+ * needed). 'white' and 'dark' get a full-page background rect first.
+ * Browser-only.
+ */
+export async function exportPrintPdf(fig: PrintFigure, mode: BackgroundMode): Promise<Uint8Array> {
+  const w = fig.widthPt;
+  const h = fig.heightPt;
+  const prepared = prepareSvg(fig.svg, mode);
+  const fontBase64 = await loadFigureFontBase64();
+  const { jsPDF } = await import('jspdf');
+  await import('svg2pdf.js'); // augments jsPDF.prototype.svg
+  const doc = new jsPDF({ unit: 'pt', format: [w, h], orientation: w >= h ? 'landscape' : 'portrait', compress: true });
+  doc.addFileToVFS('PydvmaFigureSerif.ttf', fontBase64);
+  doc.addFont('PydvmaFigureSerif.ttf', FIGURE_FONT_FAMILY, 'normal', 'Identity-H');
+  if (mode !== 'transparent') {
+    const [r, g, b] = mode === 'dark' ? hexRgb(DARK_BG) : [255, 255, 255];
+    doc.setFillColor(r, g, b);
+    doc.rect(0, 0, w, h, 'F');
+  }
+  const node = new DOMParser().parseFromString(prepared, 'image/svg+xml')
+    .documentElement as unknown as SVGSVGElement;
+  await (doc as unknown as { svg(n: Element, o: object): Promise<unknown> }).svg(node, { x: 0, y: 0, width: w, height: h });
+  return new Uint8Array(doc.output('arraybuffer'));
+}
+
+/** The bytes of a print figure in `format`: 600 dpi PNG or point-sized PDF. */
+export async function figureBytes(fig: PrintFigure, format: FigureFormat, mode: BackgroundMode): Promise<Uint8Array> {
+  if (format === 'png') return exportPrintPng(fig, mode);
+  if (format === 'pdf') return exportPrintPdf(fig, mode);
+  throw new Error(`unknown figure format: ${String(format)}`);
 }

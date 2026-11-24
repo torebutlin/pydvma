@@ -170,3 +170,14 @@ test('the serialised chrome PlotSurface emits is pinned to the fixed light hexes
   expect(white).toContain(`stroke="${CHROME.frame}"`); // #e3e6eb
   expect(white).toContain(`fill="${CHROME.axis}"`); // #66708a
 });
+
+import { withEmbeddedFont, figureBytes } from '../../src/lib/export/figure';
+
+test('withEmbeddedFont puts an @font-face for the figure family right after the root tag', () => {
+  const out = withEmbeddedFont('<svg xmlns="http://www.w3.org/2000/svg" width="1pt"><rect/></svg>', 'QUJD');
+  expect(out).toMatch(/^<svg[^>]*><style>@font-face\{font-family:'Pydvma Figure Serif';src:url\(data:font\/ttf;base64,QUJD\) format\('truetype'\)\}<\/style><rect\/>/);
+});
+
+test('figureBytes refuses an unknown format', async () => {
+  await expect(figureBytes({} as never, 'gif' as never, 'white')).rejects.toThrow(/format/);
+});
