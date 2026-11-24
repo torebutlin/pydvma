@@ -1,0 +1,127 @@
+import { describe, expect, it } from 'vitest';
+import { printFigureSvg, printTick, FIGURE_ASPECTS, PRINT_TYPE, UNITS_PER_PT, type PrintFigure }
+  from '../../src/lib/export/printFigure';
+import { prepareSvg } from '../../src/lib/export/figure';
+import { FIGURE_FONT_STACK } from '../../src/lib/export/figureFont';
+import { PRINT_CHROME } from '../../src/lib/plot/chrome';
+import type { PlotModel } from '../../src/lib/plot/build';
+
+/** A TF magnitude (red, 1.5 px) with a dashed 1 px coherence line on the right axis. */
+function tfModel(over: Partial<PlotModel> = {}): PlotModel {
+  const x = Array.from({ length: 501 }, (_, i) => i);
+  const mag = x.map((f) => -30 + 20 * Math.sin(f / 40));
+  const coh = x.map((f) => 0.5 + 0.4 * Math.cos(f / 30));
+  return {
+    lines: [
+      { x, y: mag, color: '#dc2626', opacity: 1, width: 1.5, dashed: false, yAxis: 'left', xMonotonic: true },
+      { x, y: coh, color: '#dc2626', opacity: 0.75, width: 1, dashed: true, yAxis: 'right', xMonotonic: true },
+    ],
+    xLabel: 'Frequency (Hz)', yLabel: '|H| (V/V, dB)', y2Label: 'coherence γ²',
+    xRange: [0, 500], yRange: [-72, 6], y2Range: [0, 1],
+    ...over,
+  };
+}
+
+/** Every drawn text's box lies on the canvas. */
+function inside(f: PrintFigure): void {
+  for (const t of f.texts) {
+    expect(t.box.x, t.text).toBeGreaterThanOrEqual(-0.01);
+    expect(t.box.y, t.text).toBeGreaterThanOrEqual(-0.01);
+    expect(t.box.x + t.box.w, t.text).toBeLessThanOrEqual(f.widthPt + 0.01);
+    expect(t.box.y + t.box.h, t.text).toBeLessThanOrEqual(f.heightPt + 0.01);
+  }
+}
+
+describe('printFigureSvg, one pane', () => {
+  it('exports the pinned constants', () => {
+    expect(FIGURE_ASPECTS).toEqual({ default: 16 / 9, bode: 4 / 3, nyquist: 1 });
+    expect(PRINT_TYPE).toEqual({ labelPt: 10, tickPt: 9, legendPt: 9 });
+    expect(UNITS_PER_PT).toBe(4);
+    expect(printTick(-60, 78)).toBe('−60');
+  });
+  it('a default figure is 160 mm wide at 16:9 and not grown', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 });
+    expect(f.widthPt).toBeCloseTo(453.54, 2); expect(f.heightPt).toBeCloseTo(453.54 * 9 / 16, 2);
+    expect(f.grown).toBe(false);
+    expect(f.svg).toMatch(/^<svg[^>]* width="453\.54pt" height="255\.12pt" viewBox="0 0 1814\.2 1020\.5"/);
+  });
+  it('Nyquist is 1:1 with a square frame', () => {
+    const f = printFigureSvg({ panes: [{ model: { ...tfModel({ y2Range: undefined, y2Label: undefined }), squareAspect: true } }], kind: 'nyquist', widthMm: 90 });
+    expect(f.heightPt).toBeCloseTo(f.widthPt, 2);
+    expect(f.frames[0].w).toBeCloseTo(f.frames[0].h, 2);
+  });
+  it('type is 10 pt labels and 9 pt numbers, in the embedded face', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 });
+    for (const t of f.svg.match(/<text[^>]*class="tick"[^>]*>/g)!) expect(t).toContain('font-size="36"');
+    for (const t of f.svg.match(/<text[^>]*class="label"[^>]*>/g)!) expect(t).toContain('font-size="40"');
+    expect(f.svg).toContain(`font-family="${FIGURE_FONT_STACK}"`);
+  });
+  it("prints buildPlot's ticks with a true minus", () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 });
+    const ticks = f.texts.filter((t) => t.role === 'tick').map((t) => t.text);
+    expect(ticks).toEqual(expect.arrayContaining(['−60', '−40', '−20', '0', '100', '500', '0.5', '1']));
+    expect(ticks.some((t) => t.includes('-'))).toBe(false);
+  });
+  it('every text sits inside the canvas, with a right axis and a last tick on the right edge', () => {
+    inside(printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 }));
+    inside(printFigureSvg({ panes: [{ model: tfModel({ xRange: [0, 1500], y2Range: undefined, y2Label: undefined }) }], kind: 'default', widthMm: 160 }));
+  });
+  it('the right-axis label reads top-to-bottom inside the canvas', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 });
+    expect(f.svg).toMatch(/rotate\(90\)[^>]*>coherence γ²</);
+    const lab = f.texts.find((t) => t.text === 'coherence γ²')!;
+    expect(lab.box.x + lab.box.w).toBeLessThanOrEqual(f.widthPt);
+  });
+  it('a label too long for the plot grows the height, never the type', () => {
+    const long = 'Power spectrum ((m/s²)², A-weighted, dB) re 1 (m/s²)² per band, averaged';
+    const f = printFigureSvg({ panes: [{ model: tfModel({ yLabel: long }) }], kind: 'default', widthMm: 90 });
+    expect(f.grown).toBe(true);
+    expect(f.heightPt).toBeGreaterThan(f.widthPt * 9 / 16);
+    const lab = f.texts.find((t) => t.text === long)!;
+    expect(lab.box.h).toBeLessThanOrEqual(f.frames[0].h + 0.01);
+    expect(f.svg).toMatch(new RegExp(`font-size="40"[^>]*>${long.replace(/[()]/g, '\\$&')}<`));
+  });
+  it('a 40 mm and a 300 mm figure still lay out inside their canvas', () => {
+    for (const widthMm of [40, 300]) {
+      const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm });
+      expect(f.frames[0].w).toBeGreaterThan(0); inside(f);
+    }
+  });
+  it("log axes print buildPlot's decade ticks, none clipped", () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel({ xScale: 'log', xRange: [1, 1000] }) }], kind: 'default', widthMm: 160 });
+    expect(f.texts.filter((t) => t.role === 'tick').map((t) => t.text)).toEqual(expect.arrayContaining(['1', '10', '100', '1000']));
+    inside(f);
+  });
+  it('line weights and dashes are scaled for print', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 });
+    expect(f.svg).toMatch(/<path[^>]*stroke="#dc2626"[^>]*stroke-width="4"/);            // 1.5 px → 1 pt → 4 units
+    expect(f.svg).toMatch(/<path[^>]*stroke-width="2\.7"[^>]*stroke-dasharray="9\.6 7\.2"/); // 1 px dashed
+  });
+  it('markers draw in the line colour, and markerOnly lines draw no stroke', () => {
+    const m = tfModel({ y2Range: undefined, y2Label: undefined });
+    m.lines = [{ x: [100, 200, 300], y: [-10, -20, -30], color: '#123456', opacity: 1, width: 1.4, dashed: false,
+      yAxis: 'left', marker: 'o', markerOnly: true }];
+    const f = printFigureSvg({ panes: [{ model: m }], kind: 'default', widthMm: 160 });
+    expect(f.svg.match(/<circle[^>]*stroke="#123456"[^>]*r="10\.4"|<circle[^>]*r="10\.4"[^>]*stroke="#123456"/g)).toHaveLength(3);
+    expect(f.svg).not.toMatch(/<path[^>]*stroke="#123456"/);
+  });
+  it('a pane image fills the data rect and replaces the gridlines', () => {
+    const f = printFigureSvg({ panes: [{ model: { ...tfModel(), lines: [] }, image: 'data:image/png;base64,AAAA' }], kind: 'default', widthMm: 160 });
+    const fr = f.frames[0];
+    expect(f.svg).toContain(`<image x="${(fr.x * 4).toFixed(1)}" y="${(fr.y * 4).toFixed(1)}" width="${(fr.w * 4).toFixed(1)}" height="${(fr.h * 4).toFixed(1)}"`);
+    expect(f.svg).toContain('xlink:href="data:image/png;base64,AAAA"');
+    expect(f.svg).not.toContain('class="grid"');
+  });
+  it('an empty model still draws its axes', () => {
+    const f = printFigureSvg({ panes: [{ model: { lines: [], xLabel: 'Time (s)', yLabel: 'Amplitude', xRange: null, yRange: null } }], kind: 'default', widthMm: 160 });
+    expect(f.frames).toHaveLength(1);
+  });
+  it('dark and transparent restyle every print chrome hex and keep data colours', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 });
+    const dark = prepareSvg(f.svg, 'dark');
+    for (const hex of [PRINT_CHROME.ink, PRINT_CHROME.frame, PRINT_CHROME.grid])
+      expect(dark).not.toMatch(new RegExp(`data-role="(axis|plot-bg)"[^>]*"${hex}"`, 'i'));
+    expect(dark).toContain('stroke="#dc2626"');
+    expect(prepareSvg(f.svg, 'transparent')).toMatch(/data-role="plot-bg"[^>]*fill="none"/);
+  });
+});

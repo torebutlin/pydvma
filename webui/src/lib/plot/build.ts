@@ -45,6 +45,17 @@ export interface PlotLine {
   xMonotonic?: boolean;
   /** `'bands'`: a derived octave-band step overlay, not measured data. */
   role?: 'bands';
+  /**
+   * Draw a marker at every point: `'x'` a cross, `'o'` a circle, in the
+   * line's colour. Only the print renderer (`lib/export/printFigure.ts`)
+   * reads it; `buildPlot` and the on-screen plot ignore it.
+   */
+  marker?: 'x' | 'o';
+  /**
+   * Draw only the markers, no line. Only the print renderer reads it;
+   * `buildPlot` and the on-screen plot ignore it.
+   */
+  markerOnly?: boolean;
 }
 
 /**
