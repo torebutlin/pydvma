@@ -3,9 +3,11 @@
 2026-11-24. Tore's ask. Mockups are in `dev/mockups/2026-11-24-publication-figure/`:
 `mockup_A4.pdf` (type; Tore picked variant **A**, Times-style 10 pt) and
 `aspects_A4.pdf` (one figure per type at its aspect; Tore approved the set
-"16:9 default, Bode 4:3, Nyquist 1:1"). `make_aspects.py` there is the
-throwaway layout prototype. Its margin and legend arithmetic is a useful
-reference for the real renderer.
+"16:9 default, Bode 4:3, Nyquist 1:1"), and `damping_A4.pdf` (the damping
+panel's three charts; Tore: "yes, as mocked"). `make_aspects.py` (plus
+`make_damping.py`) there is the throwaway layout prototype. Its margin and
+legend arithmetic, including the best-corner and below-axes legend, is a
+useful reference for the real renderer.
 
 ## Intent
 
@@ -78,9 +80,9 @@ clear of the corner.
   labels are plain strings (`|H| (V/V, dB)`) and print upright as written.
   *(My call: parsing labels for symbols is out of scope.)*
 - A colour bar for the sonogram, or any element the screen plot lacks.
-- The damping panel's own chart PNGs (`DampingPanel.svelte` calls
-  `exportPng` with its own SVG). They keep today's behaviour; a TODO.md
-  follow-up.
+- Changing what the damping fits compute, or what the damping charts plot
+  (their data, domains and colours stay as on screen). The band-metrics
+  table still saves as CSV only.
 - Persisting the figure width across sessions: `figureOptions` is
   session-only today and stays so.
 - Changing the on-screen plot's look, beyond the legend anchoring and the
@@ -118,10 +120,13 @@ Tore handed over the how; approach 1 is the builder's brief.
 
 ### Print renderer — `webui/src/lib/export/printFigure.ts` (new)
 
-A pure function (no DOM) that returns a self-contained SVG string:
+A pure function (no DOM) that returns a self-contained SVG string and its
+size:
 
 ```
-printFigureSvg(input: PrintFigureInput): string
+printFigureSvg(input: PrintFigureInput): PrintFigure
+// PrintFigure = { svg, widthPt, heightPt, grown, texts }
+// texts: every string drawn, for the PDF missing-glyph check
 ```
 
 `PrintFigureInput` carries:
@@ -133,9 +138,17 @@ printFigureSvg(input: PrintFigureInput): string
   table in Goals (one exported constant, `FIGURE_ASPECTS`, so the docs and
   tests read the same numbers). The sonogram is `'default'`.
 - `widthMm` (default 160).
-- `legend`: entries ('off' rows excluded, as now), fractional position and
-  visibility, placed in the **first** pane (as on screen for Bode). None for
-  the sonogram, as now.
+- `legend`: entries ('off' rows excluded, as now) and a placement, drawn
+  in the **first** pane (as on screen for Bode). None for the sonogram, as
+  now. Each entry is `{ label, color, style, faded }`, where `style` is
+  `'line' | 'dash' | 'x' | 'o' | 'xline'` and picks the swatch. Placement
+  is `{ kind: 'position', x, y }` (the on-screen legend's fractions) or
+  `{ kind: 'best' }` (the damping charts, see Damping charts).
+- Lines may carry **markers**: `PlotLine` gains optional `marker?: 'x' |
+  'o'` and `markerOnly?: boolean` (draw the markers, no stroke). Only the
+  print renderer reads them; PlotSurface ignores them, since no on-screen
+  model sets them. Markers are 2.2 pt half-size, stroked in the line's
+  colour (× 0.7 pt, ○ 0.9 pt, r 2.6 pt).
 - `fonts`: a text-measuring function `measure(text, sizePt) → widthPt`. In
   the browser it comes from the embedded font's advance widths (a generated
   table, see Font); node tests can use the same table.
@@ -208,6 +221,15 @@ pane's data rect), not the canvas:
   fit, and grow the figure by its height. It always writes full rows (line
   + label). The screen's compact dot grid is never exported: a printed
   legend must name its lines. *(My call.)*
+- **Below the axes** means an unboxed block under the x label, centred on
+  the frame, with as many equal columns as fit the frame width, filled
+  top-to-bottom then across. The figure grows by its height
+  (`grown: true`). The mockup's decay chart shows it (90 → 108 mm).
+- **Best placement** (`{ kind: 'best' }`): try the four corners at the
+  preset inset. Count the plotted points (every built path vertex, and
+  every marker) inside each candidate box, and take the corner with the
+  fewest; ties go se, ne, nw, sw. If even that corner covers more than
+  `max(2, 0.5 %)` of the points, put the legend below the axes.
 
 ### Legend on screen — `Legend.svelte`
 
@@ -295,15 +317,52 @@ refer to the whole host with a 4 px inset.
   (the same `$derived` models the plot branches render), the figure kind
   (Bode / Nyquist / default from the current view), the sonogram heat
   (`sonoCanvas.toDataURL`), and the legend state.
-  It then calls `printFigureSvg`, and passes the string to `exportPng` /
-  `exportPdf`. Those now take the SVG as given: no `stampFonts`, since the
-  print SVG sets its own fonts. Keep `stampFonts` only if DampingPanel
-  still needs it.
+  It then calls `printFigureSvg`, and passes the result to the print PNG /
+  PDF writers. The print SVG stamps `font-family` and `font-size` on every
+  `<text>` itself, so `prepareSvg`'s `stampFonts` leaves it alone. Once the
+  damping charts move to the print path, nothing serialises a screen SVG,
+  so remove `stampFonts`, `EXPORT_FONTS` and the screen-SVG `exportPng` /
+  `exportPdf` if nothing else calls them.
 - `getSvg` stays for anything else that uses it (the Bode e2e reads it);
   remove it if nothing does.
 - Snapshot the inputs when Save Figure is pressed, as today's "serialise
   NOW" does, so a plot change while the dialog is open doesn't change the
   figure.
+
+### Damping charts — `DampingPanel.svelte`
+
+The panel's three saveable charts go through the same print renderer
+(mockup `damping_A4.pdf`). Each card's save button writes the chart with
+the Export stage's `figureOptions`: formats, background and width. It
+keeps its automatic name `damping-<chart>_<stamp>.<ext>`, writing both
+files when both formats are ticked, through the same `onsavefile`
+delivery. Kind `'default'` (16:9). Legend placement `{ kind: 'best' }`.
+
+A pure module `webui/src/lib/export/dampingFigure.ts` builds each chart's
+`PrintFigureInput` from the damping store's results, with explicit
+`xRange`/`yRange` equal to the panel's own domains (so the printed chart
+plots what the card plots):
+
+- **Start-slice spectrum** (peaks mode): x `Frequency (Hz)`, y
+  `Normalised |S|` (the card says `norm |S|`; print only). Lines: the
+  normalised slice in `#4f46e5` at 1.3 px; the picked peaks as `'o'`
+  markers only, in `#dc2626`; the threshold as a dashed `#dc2626` line
+  across the x range. Domains: x = the slice's extent padded 2 %,
+  y = [0, 1.06]. Legend: `Start slice, t = {start_time, 2 dp} s` (line),
+  `Picked peaks ({n})` (o), `Threshold {fmtThr}` (dash, the panel's
+  3-significant-figure format).
+- **Decay fits** (peaks mode): x `Time (s)`, y `Re log(S)`. Per mode `i`,
+  in `LINE_PALETTE[i]`: the data as `'x'` markers only (at the panel's
+  `markerIndices`, 1.1 px, opacity 0.75), and the fitted line at 2.4 px.
+  Domains as the panel's `decayDom`. Legend per mode:
+  `{fPeak, 1 dp} Hz, Qn = {Qn, 0 dp}` (xline).
+- **Schroeder EDC** (bands mode): x `Time (s)`, y `EDC (dB)`. Per band `i`,
+  in `LINE_PALETTE[i]`: the EDC at 1.4 px, opacity 0.9, and the T60 fit
+  dashed at 2 px. Domains as the panel's `edcDom` (y [−70, 3]). Legend per
+  band: `{fc} Hz` (fc < 10 → 1 dp, else 0 dp) (line), then
+  `T60 fit (dashed)` in `#6b7280` (dash).
+
+The card's own on-screen look and its HTML legend chips don't change.
 
 ### Screen fix — coherence label
 
@@ -324,6 +383,12 @@ Check it clears the y2 tick labels (`ox + pw + 7`, ~20 px wide) with the
     60/40, and both frames share left/right edges;
   - a right-edge last tick label ("1500") lies inside the canvas;
   - a legend taller than the frame goes below the axes and grows the figure;
+  - `{ kind: 'best' }` picks the emptiest corner, and goes below the axes
+    when every corner covers more than `max(2, 0.5 %)` of the points;
+  - legend swatches follow `style` (dash, x, o, xline), and markers draw
+    with no stroke for `markerOnly` lines;
+  - `dampingFigure.ts`: each builder's labels, domains, line styles and
+    legend text for a small fixed result (the formats in the design);
   - every text element's box lies inside the canvas (margins fit the
     labels, including a long y label and a right axis);
   - font sizes are 10/9/9 pt (×4 units);
@@ -362,8 +427,9 @@ Check it clears the y2 tick labels (`ox + pw + 7`, ~20 px wide) with the
 `docs/web-logger/export.md` "Export figures": the width setting and what
 it means, 600 dpi PNG, vector PDF with embedded font, type sizes, and that
 the figure is laid out for print rather than copied from the screen. The
-CHANGELOG `## Unreleased` gets an entry. TODO.md gets the damping-panel
-follow-up.
+damping docs (wherever the card's save button is described) say the
+charts save with the Export stage's figure options and carry their
+legends. The CHANGELOG `## Unreleased` gets an entry.
 
 ## Left to the builder
 

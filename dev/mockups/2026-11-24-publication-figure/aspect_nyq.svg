@@ -1,6 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="255.12pt" height="255.12pt" viewBox="0 0 255.12 255.12" font-family="STIX Two Text" fill="#1d2027">
-<rect width="255.12" height="255.12" fill="#fff"/>
-<clipPath id="c0"><rect x="31.04" y="6.92" width="217.58" height="217.58"/></clipPath>
+<svg xmlns="http://www.w3.org/2000/svg" width="255.12pt" height="255.12pt" viewBox="0 0 255.12 255.12" font-family="STIX Two Text" fill="#1d2027"><rect width="255.12" height="255.12" fill="#fff"/><clipPath id="c0"><rect x="31.04" y="6.92" width="217.58" height="217.58"/></clipPath>
 <line x1="38.82" x2="38.82" y1="6.92" y2="224.50" stroke="#dfe2e7" stroke-width="0.4"/>
 <text x="38.82" y="235.30" font-size="9.0" text-anchor="middle">−3</text>
 <line x1="88.67" x2="88.67" y1="6.92" y2="224.50" stroke="#dfe2e7" stroke-width="0.4"/>
@@ -25,5 +23,4 @@
 <rect x="31.04" y="6.92" width="217.58" height="217.58" fill="none" stroke="#3f4652" stroke-width="0.6"/>
 <text x="139.83" y="248.60" font-size="10.0" text-anchor="middle">Real</text>
 <text transform="translate(11.00 115.71) rotate(-90)" font-size="10.0" text-anchor="middle">Imag</text>
-<g transform="translate(134.74 199.75)"><rect width="108.48" height="19.35" rx="2" fill="#fff" fill-opacity="0.92" stroke="#c5cad3" stroke-width="0.5"/><line x1="4.05" x2="18.45" y1="9.68" y2="9.68" stroke="#dc2626" stroke-width="1.6"/><text x="22.95" y="12.74" font-size="9.0">noise 30s · ch_1/ch_0</text></g>
-</svg>
+<g transform="translate(134.74 199.75)"><rect width="108.48" height="19.35" rx="2" fill="#fff" fill-opacity="0.92" stroke="#c5cad3" stroke-width="0.5"/><line x1="4.05" x2="18.45" y1="9.68" y2="9.68" stroke="#dc2626" stroke-width="1.6"/><text x="22.95" y="12.74" font-size="9.0">noise 30s · ch_1/ch_0</text></g></svg>

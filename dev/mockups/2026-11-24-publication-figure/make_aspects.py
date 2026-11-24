@@ -80,7 +80,7 @@ class Pane:
         self.y2t = nice_ticks(*y2lim, 4) if y2lim else []
 
 
-def figure_svg(panes, width_mm, aspect, legend=None, shares=None):
+def figure_svg(panes, width_mm, aspect, legend=None, shares=None, corner='se'):
     """Lay out `panes` stacked, `width_mm` wide at `aspect` (w:h)."""
     W = width_mm * MM
     H0 = W / aspect
@@ -107,11 +107,9 @@ def figure_svg(panes, width_mm, aspect, legend=None, shares=None):
     H = data_h + mt + mb + gap * (len(panes) - 1)
     pw = W - ml - mr
 
-    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W:.2f}pt" height="{H:.2f}pt" '
-           f'viewBox="0 0 {W:.2f} {H:.2f}" font-family="{FONT}" fill="{INK}">',
-           f'<rect width="{W:.2f}" height="{H:.2f}" fill="#fff"/>']
+    out = []
     y0 = mt
-    first_frame = None
+    first_frame, first_pts = None, None
     for k, (p, s) in enumerate(zip(panes, shares)):
         ph = data_h * s
         ox, oy, fw, fh = ml, y0, pw, ph
@@ -120,12 +118,19 @@ def figure_svg(panes, width_mm, aspect, legend=None, shares=None):
             ox, fw, fh = ml + (pw - side) / 2, side, side
             oy = y0 + (ph - side) / 2
         first_frame = first_frame or (ox, oy, fw, fh)
-        out.append(pane_svg(p, ox, oy, fw, fh, pad, lpad, W, H, k))
+        svg_k, pts_k = pane_svg(p, ox, oy, fw, fh, pad, lpad, W, H, k)
+        first_pts = pts_k if first_pts is None else first_pts
+        out.append(svg_k)
         y0 += ph + gap
     if legend:
-        out.append(legend_svg(legend, *first_frame))
-    out.append('</svg>')
-    return '\n'.join(out), H / MM, grown
+        leg, extra = legend_svg(legend, *first_frame, corner=corner, pts=first_pts,
+                                below_at=H, width=W)
+        out.append(leg)
+        H += extra
+    root = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W:.2f}pt" height="{H:.2f}pt" '
+            f'viewBox="0 0 {W:.2f} {H:.2f}" font-family="{FONT}" fill="{INK}">'
+            f'<rect width="{W:.2f}" height="{H:.2f}" fill="#fff"/>')
+    return root + '\n'.join(out) + '</svg>', H / MM, grown
 
 
 def pane_svg(p, ox, oy, pw, ph, pad, lpad, W, H, k):
@@ -152,12 +157,21 @@ def pane_svg(p, ox, oy, pw, ph, pad, lpad, W, H, k):
     for v in p.y2t:
         o.append(f'<text x="{ox + pw + pad:.2f}" y="{sy2(v) + 0.33 * TICK:.2f}" font-size="{TICK}">{fmt(v, 1)}</text>')
     o.append(f'<g clip-path="url(#c{k})">')
-    for (x, y, col, wpx, dashed, op, side) in p.lines:
+    pts = []
+    for ln in p.lines:
+        x, y, col, wpx, dashed, op, side = ln[:7]
+        marker = ln[7] if len(ln) > 7 else None      # None | 'x' | 'o'
+        stroke = ln[8] if len(ln) > 8 else True      # False: markers only
         f = sy2 if side == 'right' else sy
-        d = 'M' + ' L'.join(f'{sx(a):.2f} {f(b):.2f}' for a, b in zip(x, y))
-        dash = ' stroke-dasharray="2.4 1.8"' if dashed else ''
-        o.append(f'<path d="{d}" fill="none" stroke="{col}" stroke-width="{wpx * 2 / 3:.2f}" '
-                 f'opacity="{op}" stroke-linejoin="round"{dash}/>')
+        xy = [(sx(a), f(b)) for a, b in zip(x, y)]
+        pts += xy[::max(1, len(xy) // 400)]
+        if stroke:
+            d = 'M' + ' L'.join(f'{a:.2f} {b:.2f}' for a, b in xy)
+            dash = ' stroke-dasharray="2.4 1.8"' if dashed else ''
+            o.append(f'<path d="{d}" fill="none" stroke="{col}" stroke-width="{wpx * 2 / 3:.2f}" '
+                     f'opacity="{op}" stroke-linejoin="round"{dash}/>')
+        if marker:
+            o.append(marks_svg(xy, marker, col, op))
     o.append('</g>')
     o.append(f'<rect x="{ox:.2f}" y="{oy:.2f}" width="{pw:.2f}" height="{ph:.2f}" fill="none" stroke="{FRAME}" stroke-width="0.6"/>')
     if p.xticklabels:
@@ -168,23 +182,92 @@ def pane_svg(p, ox, oy, pw, ph, pad, lpad, W, H, k):
     if p.y2label:
         o.append(f'<text transform="translate({W - 3 - 0.8 * LAB:.2f} {oy + ph / 2:.2f}) rotate(90)" '
                  f'font-size="{LAB}" text-anchor="middle">{esc(p.y2label)}</text>')
-    return '\n'.join(o)
+    return '\n'.join(o), pts
 
 
-def legend_svg(entries, ox, oy, pw, ph, corner='se'):
-    sw, gap, inset, cp, row = 1.6 * LEG, 0.5 * LEG, 0.6 * LEG, 0.45 * LEG, 1.25 * LEG
-    bw = 2 * cp + sw + gap + max(tw(t, LEG) for t, _ in entries)
-    bh = 2 * cp + row * len(entries)
-    bx = ox + pw - inset - bw if corner[1] == 'e' else ox + inset
-    by = oy + ph - inset - bh if corner[0] == 's' else oy + inset
+MARK = 2.2   # marker half-size, pt
+
+
+def marks_svg(xy, kind, col, op=1.0):
+    """× or ○ markers at the mapped points `xy`."""
+    if kind == 'x':
+        d = ''.join(f'M{a - MARK:.2f} {b - MARK:.2f}L{a + MARK:.2f} {b + MARK:.2f}'
+                    f'M{a - MARK:.2f} {b + MARK:.2f}L{a + MARK:.2f} {b - MARK:.2f}' for a, b in xy)
+        return f'<path d="{d}" fill="none" stroke="{col}" stroke-width="0.7" opacity="{op}"/>'
+    return ''.join(f'<circle cx="{a:.2f}" cy="{b:.2f}" r="{MARK * 1.2:.2f}" fill="none" '
+                   f'stroke="{col}" stroke-width="0.9" opacity="{op}"/>' for a, b in xy)
+
+
+def legend_svg(entries, ox, oy, pw, ph, corner='se', pts=None, below_at=None, width=None):
+    """Legend card inside the frame. Entries are (text, colour[, style]) with style
+    'line' | 'dash' | 'x' | 'o' | 'xline'. corner 'best' picks the corner whose
+    box covers the fewest plotted points (matplotlib's loc='best')."""
+    sw, gap, inset, cp, row, cgap = 1.6 * LEG, 0.5 * LEG, 0.6 * LEG, 0.45 * LEG, 1.25 * LEG, 1.2 * LEG
+    n = len(entries)
+    cols = 3 if n > 20 else 2 if n > 10 else 1
+    per = -(-n // cols)
+    colw = [sw + gap + max(tw(e[0], LEG) for e in entries[c * per:(c + 1) * per]) for c in range(cols)]
+    bw = 2 * cp + sum(colw) + cgap * (cols - 1)
+    bh = 2 * cp + row * per
+
+    def box(c):
+        bx = ox + pw - inset - bw if c[1] == 'e' else ox + inset
+        by = oy + ph - inset - bh if c[0] == 's' else oy + inset
+        return bx, by
+
+    if corner == 'best':
+        def cover(c):
+            bx, by = box(c)
+            return sum(1 for a, b in (pts or []) if bx <= a <= bx + bw and by <= b <= by + bh)
+        corner = min(['ne', 'nw', 'se', 'sw'], key=cover)
+        if cover(corner) > max(2, 0.005 * len(pts or [])):
+            return legend_below(entries, ox, pw, below_at)
+    bx, by = box(corner)
     o = [f'<g transform="translate({bx:.2f} {by:.2f})"><rect width="{bw:.2f}" height="{bh:.2f}" rx="2" '
          f'fill="#fff" fill-opacity="0.92" stroke="{CARD}" stroke-width="0.5"/>']
-    for i, (t, col) in enumerate(entries):
-        cy = cp + row * (i + 0.5)
-        o.append(f'<line x1="{cp:.2f}" x2="{cp + sw:.2f}" y1="{cy:.2f}" y2="{cy:.2f}" stroke="{col}" stroke-width="1.6"/>'
-                 f'<text x="{cp + sw + gap:.2f}" y="{cy + 0.34 * LEG:.2f}" font-size="{LEG}">{esc(t)}</text>')
+    for i, e in enumerate(entries):
+        t, col = e[0], e[1]
+        style = e[2] if len(e) > 2 else 'line'
+        c, r = divmod(i, per)
+        x0 = cp + sum(colw[:c]) + cgap * c
+        cy = cp + row * (r + 0.5)
+        if style in ('line', 'dash', 'xline'):
+            dash = ' stroke-dasharray="2.4 1.8"' if style == 'dash' else ''
+            o.append(f'<line x1="{x0:.2f}" x2="{x0 + sw:.2f}" y1="{cy:.2f}" y2="{cy:.2f}" '
+                     f'stroke="{col}" stroke-width="1.6"{dash}/>')
+        if style in ('x', 'o', 'xline'):
+            o.append(marks_svg([(x0 + sw / 2, cy)], 'o' if style == 'o' else 'x', col))
+        o.append(f'<text x="{x0 + sw + gap:.2f}" y="{cy + 0.34 * LEG:.2f}" font-size="{LEG}">{esc(t)}</text>')
     o.append('</g>')
-    return ''.join(o)
+    return ''.join(o), 0.0
+
+
+def legend_below(entries, ox, pw, top):
+    """Legend as an unboxed block under the axes, as many columns as fit the
+    frame width; returns (svg, height it adds to the figure)."""
+    sw, gap, row, cgap = 1.6 * LEG, 0.5 * LEG, 1.25 * LEG, 1.6 * LEG
+    cw = sw + gap + max(tw(e[0], LEG) for e in entries)
+    cols = max(1, min(len(entries), int((pw + cgap) // (cw + cgap))))
+    per = -(-len(entries) // cols)
+    cols = -(-len(entries) // per)
+    bw = cols * cw + (cols - 1) * cgap
+    x_start = ox + (pw - bw) / 2
+    o = [f'<g transform="translate({x_start:.2f} {top + 0.3 * LEG:.2f})">']
+    for i, e in enumerate(entries):
+        t, col = e[0], e[1]
+        style = e[2] if len(e) > 2 else 'line'
+        c, r = divmod(i, per)
+        x0 = c * (cw + cgap)
+        cy = row * (r + 0.5)
+        if style in ('line', 'dash', 'xline'):
+            dash = ' stroke-dasharray="2.4 1.8"' if style == 'dash' else ''
+            o.append(f'<line x1="{x0:.2f}" x2="{x0 + sw:.2f}" y1="{cy:.2f}" y2="{cy:.2f}" '
+                     f'stroke="{col}" stroke-width="1.6"{dash}/>')
+        if style in ('x', 'o', 'xline'):
+            o.append(marks_svg([(x0 + sw / 2, cy)], 'o' if style == 'o' else 'x', col))
+        o.append(f'<text x="{x0 + sw + gap:.2f}" y="{cy + 0.34 * LEG:.2f}" font-size="{LEG}">{esc(t)}</text>')
+    o.append('</g>')
+    return ''.join(o), row * per + 0.6 * LEG
 
 
 def viridis_png(z):
