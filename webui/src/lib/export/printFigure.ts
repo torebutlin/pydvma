@@ -105,6 +105,14 @@ export interface PrintFigure {
   texts: PrintText[]; frames: PtBox[]; legendBox: (PtBox & { below: boolean }) | null;
 }
 
+/**
+ * How a Bode figure's data height is shared: magnitude 60 %, phase 40 %
+ * (fractions of the data height left after the gap between the panes).
+ */
+export const BODE_SPLIT = [0.6, 0.4] as const;
+/** Gap between stacked panes, pt: the top pane's frame to the next pane's frame. */
+export const PANE_GAP_PT = 9;
+
 /** Gap from the canvas edge to the outermost text, pt. */
 const EDGE_PT = 3;
 /** Gap between the frame and its tick numbers, pt (0.4 × the tick size). */
@@ -301,9 +309,10 @@ interface PaneOut { svg: string; texts: PrintText[] }
  * Draw one pane in its frame (pt): image or gridlines, the clipped data lines
  * and markers, the frame, the tick numbers and the axis labels. `k` numbers
  * its clip path; `widthPt` is the canvas width, which the y2 label hangs from
- * and the x label is kept inside.
+ * and the x label is kept inside. With `xLabels` false (every stacked pane but
+ * the last) the x tick numbers and the x label are left out; the gridlines stay.
  */
-function layoutPane(pane: PrintPane, k: number, frame: PtBox, widthPt: number): PaneOut {
+function layoutPane(pane: PrintPane, k: number, frame: PtBox, widthPt: number, xLabels = true): PaneOut {
   const { model } = pane;
   const { x: ox, y: oy, w: fw, h: fh } = frame;
   const wU = fw * UNITS_PER_PT, hU = fh * UNITS_PER_PT;
@@ -338,7 +347,7 @@ function layoutPane(pane: PrintPane, k: number, frame: PtBox, widthPt: number): 
     if (p.d && !line.markerOnly) {
       const dash = p.dashed ? ` stroke-dasharray="${sty(DASH_PT[0])} ${sty(DASH_PT[1])}"` : '';
       parts.push(`<path d="${p.d}" fill="none" stroke="${escAttr(p.color)}" `
-        + `stroke-width="${sty(p.width * LINE_PT_PER_PX)}" opacity="${opa(p.opacity)}"${dash}/>`);
+        + `stroke-width="${sty(p.width * LINE_PT_PER_PX)}" opacity="${opa(p.opacity)}"${dash} stroke-linejoin="round"/>`);
     }
     if (line.marker) parts.push(markersSvg(line, model, built, wU, hU));
   });
@@ -348,7 +357,7 @@ function layoutPane(pane: PrintPane, k: number, frame: PtBox, widthPt: number): 
     + `fill="none" stroke="${PRINT_CHROME.frame}" stroke-width="${sty(FRAME_PT)}"/>`);
 
   const xTickY = oy + fh + TICK_PAD_PT + BASELINE_EM * tick;
-  for (const t of built.xTicks) {
+  for (const t of xLabels ? built.xTicks : []) {
     put(flatText(printTick(t.v, spans.x), 'tick', tick, 'middle', ox + t.px / UNITS_PER_PT, xTickY));
   }
   for (const t of built.yTicks) {
@@ -360,7 +369,7 @@ function layoutPane(pane: PrintPane, k: number, frame: PtBox, widthPt: number): 
       oy + t.px / UNITS_PER_PT + Y_TICK_BASELINE_EM * tick));
   }
 
-  if (model.xLabel) {
+  if (model.xLabel && xLabels) {
     // Centred on the frame, but kept inside the canvas when it fits it.
     const w = measureText(model.xLabel, label);
     let cx = ox + fw / 2;
@@ -431,33 +440,50 @@ function markersSvg(line: PlotLine, model: PlotModel, built: BuiltPlot, wU: numb
  * (`PlotLine.marker`) are 2.2 pt half-size: × stroked 0.7 pt, ○ radius 2.6 pt
  * stroked 0.9 pt.
  *
- * Lays out exactly one pane (`'default'`, `'nyquist'`) and throws otherwise.
+ * Lays out one pane (`'default'`, `'nyquist'`) or, for `'bode'`, two stacked
+ * panes (magnitude, then phase) and throws on any other count. The Bode panes
+ * share one set of margins, so their frames share left and right edges; the
+ * data height (after `PANE_GAP_PT` of gap) splits by `BODE_SPLIT`; the grow
+ * rule is per pane (label need ÷ share); only the last pane prints x numbers
+ * and the x label, the others keep their gridlines. Data lines are stroked
+ * with round joins.
  * The legend is not drawn yet: `legendBox` is always null.
  */
 export function printFigureSvg(input: PrintFigureInput): PrintFigure {
-  if (input.panes.length !== 1) {
-    throw new Error(`printFigureSvg: expected one pane, got ${input.panes.length}`);
+  const want = input.kind === 'bode' ? 2 : 1;
+  if (input.panes.length !== want) {
+    throw new Error(`printFigureSvg: kind '${input.kind}' takes ${want === 1 ? 'one pane' : 'two panes'}, got ${input.panes.length}`);
   }
+  const shares: readonly number[] = want === 2 ? BODE_SPLIT : [1];
   const W = input.widthMm * PT_PER_MM;
   const H0 = W / FIGURE_ASPECTS[input.kind];
   const measured = input.panes.map(measurePane);
   const m = figureMargins(measured, W);
 
-  let dataH = H0 - m.top - m.bottom;
-  const need = Math.max(...measured.map(labelNeed));
+  // The data height is what is left after the margins and the gaps, shared by
+  // `shares`; a pane whose rotated labels need more than its share grows all.
+  const gaps = PANE_GAP_PT * (shares.length - 1);
+  let dataH = H0 - m.top - m.bottom - gaps;
+  const need = Math.max(...measured.map((p, i) => labelNeed(p) / shares[i]));
   const grown = need > dataH;
   if (grown) dataH = need;
-  const H = dataH + m.top + m.bottom;
+  const H = dataH + gaps + m.top + m.bottom;
 
-  const slot: PtBox = { x: m.left, y: m.top, w: Math.max(1, W - m.left - m.right), h: dataH };
-  const pane = input.panes[0];
-  const frame = frameIn(slot, pane.model.squareAspect);
-  const out = layoutPane(pane, 0, frame, W);
+  const frames: PtBox[] = [];
+  const outs: PaneOut[] = [];
+  let y = m.top;
+  input.panes.forEach((pane, i) => {
+    const slot: PtBox = { x: m.left, y, w: Math.max(1, W - m.left - m.right), h: dataH * shares[i] };
+    const frame = frameIn(slot, pane.model.squareAspect);
+    frames.push(frame);
+    outs.push(layoutPane(pane, i, frame, W, i === input.panes.length - 1));
+    y += slot.h + PANE_GAP_PT;
+  });
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" `
     + `width="${W.toFixed(2)}pt" height="${H.toFixed(2)}pt" viewBox="0 0 ${u(W)} ${u(H)}">`
     + `<rect data-role="plot-bg" x="0" y="0" width="${u(W)}" height="${u(H)}" fill="${PRINT_CHROME.bg}"/>`
-    + out.svg
+    + outs.map((o) => o.svg).join('')
     + '</svg>';
-  return { svg, widthPt: W, heightPt: H, grown, texts: out.texts, frames: [frame], legendBox: null };
+  return { svg, widthPt: W, heightPt: H, grown, texts: outs.flatMap((o) => o.texts), frames, legendBox: null };
 }

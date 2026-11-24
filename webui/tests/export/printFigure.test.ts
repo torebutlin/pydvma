@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { printFigureSvg, printTick, FIGURE_ASPECTS, PRINT_TYPE, UNITS_PER_PT, type PrintFigure }
+import { printFigureSvg, printTick, BODE_SPLIT, PANE_GAP_PT, FIGURE_ASPECTS, PRINT_TYPE, UNITS_PER_PT, type PrintFigure }
   from '../../src/lib/export/printFigure';
 import { prepareSvg } from '../../src/lib/export/figure';
 import { FIGURE_FONT_STACK } from '../../src/lib/export/figureFont';
@@ -19,6 +19,15 @@ function tfModel(over: Partial<PlotModel> = {}): PlotModel {
     xLabel: 'Frequency (Hz)', yLabel: '|H| (V/V, dB)', y2Label: 'coherence γ²',
     xRange: [0, 500], yRange: [-72, 6], y2Range: [0, 1],
     ...over,
+  };
+}
+
+/** A phase pane for a Bode figure: the same x, a phase line, no right axis. */
+function phaseModel(): PlotModel {
+  const x = Array.from({ length: 501 }, (_, i) => i);
+  return {
+    lines: [{ x, y: x.map((f) => 150 * Math.sin(f / 50)), color: '#dc2626', opacity: 1, width: 1.5, dashed: false, yAxis: 'left', xMonotonic: true }],
+    xLabel: 'Frequency (Hz)', yLabel: 'Phase (deg)', xRange: [0, 500], yRange: [-180, 180],
   };
 }
 
@@ -123,5 +132,56 @@ describe('printFigureSvg, one pane', () => {
       expect(dark).not.toMatch(new RegExp(`data-role="(axis|plot-bg)"[^>]*"${hex}"`, 'i'));
     expect(dark).toContain('stroke="#dc2626"');
     expect(prepareSvg(f.svg, 'transparent')).toMatch(/data-role="plot-bg"[^>]*fill="none"/);
+  });
+});
+
+describe('printFigureSvg, Bode', () => {
+  it('exports the split and gap', () => {
+    expect(BODE_SPLIT).toEqual([0.6, 0.4]); expect(PANE_GAP_PT).toBe(9);
+  });
+  it('Bode is 4:3 with a 60/40 split and a 9 pt gap', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }, { model: phaseModel() }], kind: 'bode', widthMm: 160 });
+    expect(f.heightPt).toBeCloseTo(f.widthPt * 3 / 4, 1); expect(f.grown).toBe(false);
+    expect(f.frames[0].h / f.frames[1].h).toBeCloseTo(1.5, 3);
+    expect(f.frames[1].y - (f.frames[0].y + f.frames[0].h)).toBeCloseTo(9, 3);
+  });
+  it('Bode frames share their left and right edges', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }, { model: phaseModel() }], kind: 'bode', widthMm: 160 });
+    expect(f.frames[1].x).toBeCloseTo(f.frames[0].x, 6); expect(f.frames[1].w).toBeCloseTo(f.frames[0].w, 6);
+  });
+  it("Bode's top pane keeps its gridlines but prints no x numbers or x label", () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }, { model: phaseModel() }], kind: 'bode', widthMm: 160 });
+    expect(f.texts.filter((t) => t.text === 'Frequency (Hz)')).toHaveLength(1);
+    // x tick labels are the ones horizontally over the frame (y ticks sit left of it, y2 ticks right)
+    const fr = f.frames[0];
+    const xTicks = f.texts.filter((t) => t.role === 'tick' && t.box.x + t.box.w > fr.x && t.box.x < fr.x + fr.w);
+    expect(xTicks.map((t) => t.text)).toEqual(['0', '100', '200', '300', '400', '500']);
+    for (const t of xTicks) expect(t.box.y).toBeGreaterThan(f.frames[1].y + f.frames[1].h);
+    expect((f.svg.match(/class="grid"/g) ?? []).length).toBeGreaterThan(12);
+    inside(f);
+  });
+  it('clip ids are distinct per pane, and a pane count that does not match the kind throws', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }, { model: phaseModel() }], kind: 'bode', widthMm: 160 });
+    expect(f.svg).toContain('id="pf-clip-0"'); expect(f.svg).toContain('id="pf-clip-1"');
+    expect(() => printFigureSvg({ panes: [{ model: tfModel() }], kind: 'bode', widthMm: 160 })).toThrow(/bode/);
+    expect(() => printFigureSvg({ panes: [{ model: tfModel() }, { model: phaseModel() }], kind: 'default', widthMm: 160 })).toThrow(/one pane/);
+  });
+  it('a long label grows the Bode height per pane share', () => {
+    const long = 'Phase of the transfer function between the two measured channels (deg), unwrapped';
+    const f = printFigureSvg({ panes: [{ model: tfModel() }, { model: { ...phaseModel(), yLabel: long } }], kind: 'bode', widthMm: 90 });
+    expect(f.grown).toBe(true);
+    expect(f.frames[0].h / f.frames[1].h).toBeCloseTo(1.5, 3);
+    inside(f);
+  });
+});
+
+describe('printFigureSvg, data line joins', () => {
+  it('data lines end with a round linejoin, markers do not', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 });
+    expect(f.svg).toMatch(/<path d="[^"]*" fill="none" stroke="#dc2626" stroke-width="4" opacity="1" stroke-linejoin="round"\/>/);
+    expect(f.svg).toMatch(/stroke-dasharray="9\.6 7\.2" stroke-linejoin="round"\/>/);
+    const m = tfModel({ y2Range: undefined, y2Label: undefined });
+    m.lines = [{ x: [100, 200], y: [-10, -20], color: '#123456', opacity: 1, width: 1.4, dashed: false, yAxis: 'left', marker: 'x', markerOnly: true }];
+    expect(printFigureSvg({ panes: [{ model: m }], kind: 'default', widthMm: 160 }).svg).not.toContain('linejoin');
   });
 });
