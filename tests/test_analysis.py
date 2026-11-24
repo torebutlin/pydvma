@@ -1285,6 +1285,78 @@ class TestDampingBothMethods:
         assert s_hits < 2, f'STFT should NOT resolve both modes, got {sfn}'
 
 
+class TestDampingFitStopsAtTheNoise:
+    """Peaks mode (STFT and CWT share `_fit_modes_from_image`), 2026-11-24:
+    each mode is fitted only where its bin stands more than
+    `DECAY_FLOOR_MARGIN_DB` above that bin's own noise floor, as
+    vibration_apps' decay.js does. The free-floor model it replaces could
+    put the floor far below the noise and fit the tail as decay."""
+
+    FS, N = 10000, 50000   # 5 s
+
+    @classmethod
+    def _td(cls, modes, noise_rms, seed):
+        rng = np.random.default_rng(seed)
+        y = sum(a * _decaying_sine(cls.FS, cls.N, fn, Q) for fn, Q, a in modes)
+        y = y + noise_rms * rng.standard_normal(cls.N)
+        return _make_time_data(y[:, None], cls.FS)
+
+    def test_noisy_fast_modes_q_within_4pc_median(self):
+        """Fast modes in strong noise, over 8 noise records: every mode is
+        found in every record and its median Q error is under 4 %. (Over 30
+        records the old free-floor fit's 90th-percentile error was 10-14 %
+        here, against 6-8 % now; at three times the noise it lost the fast
+        modes in over half the records.)"""
+        modes = [(250, 300, 1.0), (460, 1400, 0.5), (1000, 800, 0.3),
+                 (1630, 900, 0.4), (1950, 1200, 0.2)]
+        errs = {f0: [] for f0, _, _ in modes}
+        for seed in range(8):
+            td = self._td(modes, 1e-2, seed=seed)
+            fn, Qn, _ = analysis.calculate_damping_from_sono(td, n_chan=0, nperseg=2048)
+            for f0, Q, _ in modes:
+                j = int(np.argmin(np.abs(fn - f0)))
+                assert abs(fn[j] - f0) / f0 < 0.01, (seed, f0, fn)
+                errs[f0].append(abs(Qn[j] - Q) / Q)
+        for f0, e in errs.items():
+            assert np.median(e) < 0.04, (f0, e)
+
+    def test_cwt_fit_ignores_the_wrapped_record_end(self):
+        """A clean decay: the CWT's last columns hold the record's start,
+        wrapped round. The fit stops short of them, so it still finds the
+        mode, and its floor is far below the decay's start."""
+        fs, N = 2000, 8000
+        td = _make_time_data(_decaying_sine(fs, N, 90.0, 40.0)[:, None], fs)
+        fn, Qn, fd = analysis.calculate_damping_from_cwt(td, n_chan=0)
+        j = int(np.argmin(np.abs(fn - 90.0)))
+        assert abs(fn[j] - 90.0) < 1.0 and Qn[j] == pytest.approx(40.0, rel=0.05)
+        assert fd['fits'][j]['range_db'] > 100
+
+    def test_mode_with_too_little_decay_is_dropped(self):
+        """A 1 kHz mode whose bin is above floor + 10 dB for only 2 frames is
+        a candidate peak but gets no fit (the old fit reported a Q from the
+        noise)."""
+        td = self._td([(250, 300, 1.0), (1000, 300, 0.05)], 1e-2, seed=2)
+        fn, Qn, fd = analysis.calculate_damping_from_sono(
+            td, n_chan=0, nperseg=2048, peak_threshold=0.002)
+        assert np.any(np.abs(fd['peaks_freq'] - 1000.0) < 10.0)
+        assert not np.any(np.abs(fn - 1000.0) < 20.0), fn
+        assert np.any(np.abs(fn - 250.0) < 3.0)
+
+    def test_fit_reports_floor_and_crossover(self):
+        td = self._td([(250, 300, 1.0), (1000, 800, 0.3)], 1e-2, seed=3)
+        _, _, fd = analysis.calculate_damping_from_sono(td, n_chan=0, nperseg=2048)
+        assert fd['fits']
+        for m in fd['fits']:
+            for key in ('noise', 't_cross', 'range_db'):
+                assert np.isfinite(m[key]), key
+            assert m['range_db'] > analysis.DECAY_FLOOR_MARGIN_DB
+            assert len(m['t_fit']) >= 3
+            assert m['t_fit'][-1] <= m['t_cross']
+            # Every fitted point stands above floor + margin.
+            assert np.all(m['real_data'] > m['noise']
+                          + analysis.DECAY_FLOOR_MARGIN_DB / 20 * np.log(10))
+
+
 class TestDampingPeakThresholdAndFitContext:
     """Round-7 interactive damping UI surface: the promoted `peak_threshold`
     parameter and the peak-picking context returned in `fit_data` (start

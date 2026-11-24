@@ -2013,14 +2013,20 @@ def calculate_cwt(time_data, f_range=None, voices_per_octave=16, w0=6.0,
 
 # define a custom functions for fitting
 def func_real(t, A,B,N):
-    '''Internal curve-fit model: log-amplitude of a decay plus a noise floor.'''
+    '''Log-amplitude of a decay plus a noise floor, ``Re ln(e^(A-Bt) + i e^N)``.
+
+    The damping fits fitted this model over the whole record until
+    2026-11-24; they now fit a straight line to the decay above the measured
+    floor (see `_fit_modes_from_image`). Kept for anyone who calls it.
+    '''
     #ensure exp(A) and exp(N) are positive
     f = np.log(np.exp(A)*np.exp(-B*t) + 1j*np.exp(N))
     f = np.real(f)
     return f
 
 def func_imag(t, W, C):
-    '''Internal curve-fit model: a straight-line phase ``W*t + C``.'''
+    '''A straight-line phase ``W*t + C`` (kept for compatibility; the
+    damping fits now use ``numpy.polyfit`` directly).'''
     f = W*t + C
     return f
 
@@ -2057,7 +2063,7 @@ def _resolve_damping_start_slice(t, start_time, settings, default_start_frac=Non
 
 
 def _fit_modes_from_image(t, f, Sc, time_slice, phase_has_carrier,
-                          peak_threshold=None):
+                          peak_threshold=None, end_margin=None):
     '''Shared modal-damping fit core over a complex time-frequency image.
 
     Works on ANY complex single-channel image ``Sc`` of shape
@@ -2066,6 +2072,23 @@ def _fit_modes_from_image(t, f, Sc, time_slice, phase_has_carrier,
     ``time_slice`` mark candidate modes; for each, the log-magnitude decay of
     ``Sc`` over time gives the damping and the unwrapped phase slope gives the
     (damped) frequency, from which ``fn`` and ``Qn = 1/(2*zeta)`` follow.
+
+    Only the decay that stands clear of the noise is fitted (2026-11-24, after
+    vibration_apps' decay.js): the bin's noise floor is the mean power of the
+    last `DECAY_TAIL_FRACTION` of its frames after ``time_slice`` (at least
+    two), and the fitted stretch runs from the bin's loudest frame until its
+    level first comes within `DECAY_FLOOR_MARGIN_DB` of that floor. A
+    straight line through ``ln|S|`` there gives the decay rate ``B``, and the
+    phase is fitted over the same stretch. A mode with fewer than three frames
+    in its stretch, or whose line does not fall, gets no fit (it stays in
+    ``peaks_freq``). The model fit this replaced (`func_real`, free noise
+    level, whole record) could put the floor far below the noise and fit the
+    noise tail as decay.
+
+    ``end_margin`` (seconds per frequency, or None) drops the record's last
+    ``end_margin[peak]`` seconds from that bin's fit and floor: the CWT path
+    passes `CWT_DAMPING_END_SCALES` wavelet scales, where its circular wrap
+    brings the record's start back in.
 
     ``phase_has_carrier`` selects how the phase slope maps to frequency:
 
@@ -2099,45 +2122,45 @@ def _fit_modes_from_image(t, f, Sc, time_slice, phase_has_carrier,
     wn_n = []
     fits = []
 
+    tiny = np.finfo(np.float64).tiny
     for peak in peaks:
 
-        # Extract the real and imaginary parts of Sc at the peak frequency
-        real_part = np.real(np.log(Sc[peak, :]))
-        imag_part = np.unwrap(np.imag(np.log(Sc[peak, :])))
+        # Log-magnitude and unwrapped phase of the bin over time.
+        Sk = Sc[peak, :]
+        mag = np.maximum(np.abs(Sk), np.sqrt(tiny))
+        real_part = np.log(mag)
+        imag_part = np.unwrap(np.angle(Sk))
 
-        # Fit the real part to a custom function
-        try:
-            popt_real, _ = curve_fit(func_real, t[time_slice:], real_part[time_slice:])
-        except Exception:
-            # Skip this peak if the fit fails
+        # The decay only where it stands clear of the noise (decay.js): the
+        # bin's floor from the last tenth of the frames after the start, and
+        # the stretch from its loudest frame until it first comes within
+        # DECAY_FLOOR_MARGIN_DB of that floor.
+        stop = mag.size
+        if end_margin is not None:
+            # Ignore the record's last end_margin[peak] seconds (the CWT's
+            # circular wrap brings the record's start back in there).
+            stop = int(np.searchsorted(t, t[-1] - end_margin[peak], side='right'))
+        if stop - time_slice < 3:
             continue
-        real_fit = func_real(t, *popt_real)
-        A = popt_real[0]
-        B = popt_real[1]
-        N = popt_real[2]
+        P = mag[time_slice:stop] ** 2
+        noise, kp, kend = _decay_floor_stretch(
+            P, max(2, int(round(DECAY_TAIL_FRACTION * P.size))))
+        t0_idx, t1_idx = time_slice + kp, time_slice + kend + 1
+        if t1_idx - t0_idx < 3:
+            continue   # too little decay above the noise to fit
+        tt = t[t0_idx:t1_idx]
 
-        # Identify crossover time when noise starts to dominate
-        t_cross = (A - N)/B if B != 0 else t[-1]
-        # nearest time index
-        time_cross = np.argmin(np.abs(t - t_cross))
+        # ln|S| = A - B t over that stretch: B is the envelope decay rate.
+        slope, A = np.polyfit(tt, real_part[t0_idx:t1_idx], 1)
+        if not slope < 0:
+            continue   # not a decay
+        B = -slope
+        N = 0.5 * np.log(noise)                # the floor, as ln|S|
+        t_cross = (A - N) / B                  # where the line meets it
+        real_fit = A - B * t
 
-        # Fit the imaginary part to a linear function for clean part of the signal
-        t0_idx = time_slice
-        dt = int(np.ceil(0.9*(time_cross - time_slice)))
-        dt = np.max([2,dt])
-        t1_idx = t0_idx + dt
-
-        # Only continue if there are enough datapoints for imaginary part fitting
-        if dt <= 4:
-            continue
-
-        # Fit the imaginary part to a linear function for clean part of the signal
-        try:
-            popt_imag,_ = curve_fit(func_imag, t[t0_idx:t1_idx], imag_part[t0_idx:t1_idx])
-        except Exception:
-            # Skip this peak if the fit fails
-            continue
-        W = popt_imag[0]
+        # The phase slope over the same stretch gives the frequency.
+        W = np.polyfit(tt, imag_part[t0_idx:t1_idx], 1)[0]
         # Map the fitted phase slope to the angular frequency. For the STFT the
         # phase is referenced to the bin, so add the bin carrier; for the
         # analytic CWT the slope is already the angular frequency.
@@ -2156,7 +2179,10 @@ def _fit_modes_from_image(t, f, Sc, time_slice, phase_has_carrier,
             'real_fit': real_fit[t0_idx:t1_idx],
             'real_data': real_part[t0_idx:t1_idx],
             'f_peak': f[peak],
-            'Qn': Qn
+            'Qn': Qn,
+            'noise': float(N),
+            't_cross': float(t_cross),
+            'range_db': float(10.0 * np.log10(P[kp] / noise)),
         })
 
         # Store the results
@@ -2217,11 +2243,15 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None,
         fit_data (dict): dict containing data needed for plotting the fits:
             - 't': time axis
             - 'fits': list of dicts, each with keys:
-                - 't_fit': time values for the fit region
-                - 'real_fit': fitted real part values
-                - 'real_data': actual real part data values
+                - 't_fit': time values for the fit region (the decay's
+                  stretch above floor + `DECAY_FLOOR_MARGIN_DB`)
+                - 'real_fit': the fitted line, ``ln|S|``
+                - 'real_data': the measured ``ln|S|``
                 - 'f_peak': peak frequency (Hz)
                 - 'Qn': Q factor for this mode
+                - 'noise': the bin's noise floor, as ``ln|S|``
+                - 't_cross': where the fitted line meets the floor (s)
+                - 'range_db': the decay's loudest frame above the floor (dB)
             - 'time_slice' / 'start_time': the fit-start frame index and its
               time (s) — the resolved free-decay start
             - 'threshold': the normalised peak threshold actually used
@@ -2247,6 +2277,12 @@ def calculate_damping_from_sono(time_data,n_chan=1,nperseg=None,start_time=None,
 # envelope and the phase slope generously sampled while still shrinking a
 # narrow-band fit's image by the same factor.
 _CWT_DAMPING_OVERSAMPLE = 4
+
+CWT_DAMPING_END_SCALES = 7.0
+"""How many wavelet scales (``s = w0 / (2 pi f)``) at the end of the record
+the CWT damping fit ignores, per frequency: the FFT's circular wrap brings
+the record's start back into the last columns, attenuated by the Morlet
+envelope ``exp(-d**2 / 2 s**2)``, which at 7 scales is about -213 dB."""
 
 
 def _cwt_damping_time_step(fs, f_max, oversample=_CWT_DAMPING_OVERSAMPLE):
@@ -2348,9 +2384,15 @@ def calculate_damping_from_cwt(time_data, n_chan=1, start_time=None,
 
     time_slice = _resolve_damping_start_slice(t, start_time, time_data.settings,
                                               default_start_frac=0.05)
+    # The FFT-based CWT wraps: the record's start leaks back into its last
+    # columns, through a Morlet envelope exp(-d^2 / 2s^2) at distance d, with
+    # scale s = w0 / (2 pi f). Beyond CWT_DAMPING_END_SCALES scales that is
+    # below -200 dB, so the fit (and its noise floor) stops short of it.
+    end_margin = CWT_DAMPING_END_SCALES * w0 / (2 * np.pi * np.asarray(freqs))
     return _fit_modes_from_image(t, freqs, Wc, time_slice,
                                  phase_has_carrier=True,
-                                 peak_threshold=peak_threshold)
+                                 peak_threshold=peak_threshold,
+                                 end_margin=end_margin)
 
 
 #%% Damping by band (band-pass filter bank + Schroeder decay integral)
@@ -2545,13 +2587,28 @@ def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
     - ``EDT``  — early decay time, 0 to -10 dB fit x6 (perceived reverberance)
     - ``T20``  — -5 to -25 dB fit x3
     - ``T30``  — -5 to -35 dB fit x2
-    - ``T60``  — the reverberation time: T30 when its 35 dB range exists,
-      else T20 (the standard fallback); NaN when neither window fits
+    - ``T60``  — the reverberation time: the first TRUSTED of T30, T20 and
+      EDT (see below); NaN when none is trusted
     - ``Qn``   — the equivalent band-centred Q factor, ``Q = pi*fc*T60 /
       (3*ln 10)`` (~= ``fc*T60/2.20``), from ``T60 = 3*ln10/(zeta*wn)``
 
-    A metric is NaN when the band's EDC never spans that fit window
-    (insufficient decay range above the noise floor) — not an error.
+    Each band's curve stops where its decay meets the noise (2026-11-24,
+    after vibration_apps' decay.js; see `_band_decay_cut`): the floor is the
+    band's mean square over the last `DECAY_TAIL_FRACTION` of the decay, a
+    line through its level in blocks of ``max(10 ms, 2/fc)`` from the loudest
+    block to `DECAY_FLOOR_MARGIN_DB` above the floor gives the crossover, and
+    the Schroeder integral stops there with the decay's own energy beyond it
+    added. Integrated to the end of the record instead, the noise counted as
+    decay and a decay that ended early read many times too long.
+
+    A metric is NaN when the band's curve never spans that fit window, and
+    flagged (``EDT_flag`` / ``T20_flag`` / ``T30_flag``: comma-joined
+    reasons, ``''`` when trusted) when the band does not support it:
+    ``'range'`` — the decay starts less than `DECAY_NEEDS_DB` (20 / 35 /
+    45 dB, ISO 3382) above the noise; ``'short'`` — it is shorter than the
+    band filter's own ringing, ``16/(f_hi - f_lo)`` (Jacobsen and Rindel);
+    ``'bent'`` — its fitted line falls outside `DECAY_DROP_RANGE` of the
+    window's own drop. A flagged value is still reported; only T60 skips it.
 
     Args:
         time_data (TimeData): time series data
@@ -2562,8 +2619,9 @@ def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
             base-10-preferred centres). Ladders anchor at 1000 Hz and keep
             only bands whose FULL width lies inside ``f_range``.
         start_time (float, optional): free-decay start (seconds); None infers
-            it from the pretrigger (see `_resolve_damping_start_slice`), with
-            t=0 as the fallback
+            it from the pretrigger (see `_resolve_damping_start_slice`), or,
+            with no pretrigger, takes the onset: the loudest sample plus
+            2.3 ms (`_decay_onset`)
         f_range (tuple, optional): ``(f_min, f_max)`` Hz analysis range; None
             uses ``4/T .. 0.4*fs``, where ``T`` is the decay's length
         filter_order (int, optional): Butterworth section order, default 4
@@ -2573,10 +2631,14 @@ def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
         result (dict): The per-band arrays ``fc``, ``f_lo``, ``f_hi`` (Hz)
             and ``EDT``, ``T20``, ``T30``, ``T60`` (s) and ``Qn`` (NaN
             where unfittable); ``bands`` (the argument);
-            ``start_time`` (the resolved decay start, s); and
+            ``start_time`` (the resolved decay start, s); per band
+            ``noise_db`` (the floor, dB re the loudest block),
+            ``range_db`` (the loudest block above the floor),
+            ``cut_time`` (where the curve stops, s after the start) and
+            the lists ``EDT_flag`` / ``T20_flag`` / ``T30_flag``; and
             ``band_data``, one dict per band carrying the plotting
-            payload: the (decimated) EDC ``edc_t`` / ``edc_db`` and the
-            T60 fit window ``fit_t`` / ``fit_db``.
+            payload: the (decimated) EDC ``edc_t`` / ``edc_db`` up to the
+            cut, ``cut_t``, and the T60 fit window ``fit_t`` / ``fit_db``.
 
     Raises:
         ValueError: ``bands`` is not one of the four names above, or
