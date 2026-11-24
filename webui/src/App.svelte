@@ -57,12 +57,14 @@
   import { dataExtent, type PlotModel } from './lib/plot/build';
   import { logFreqFloor } from './lib/plot/logFloor';
   import { readDvma, writeDvma } from './lib/codec/dvma';
-  import { legendOverlaySvg } from './lib/export/legendOverlay';
   import { exportBytes, type Exporter } from './lib/export/data';
-  import { exportPdf, exportPng } from './lib/export/figure';
+  import { figureBytes } from './lib/export/figure';
   import {
-    FIGURE_EXTENSIONS, defaultFigureName, figureFormats, figureOptions, figureTargets,
+    FIGURE_EXTENSIONS, defaultFigureName, figureFormats, figureNotes, figureOptions, figureTargets,
+    type FigureFormat,
   } from './lib/export/figureSave';
+  import { printFigureSvg, type PrintFigure } from './lib/export/printFigure';
+  import { viewFigureInput } from './lib/export/viewFigure';
   import { sniffFormat } from './lib/files/sniff';
   import { fallbackDir, pickWorkDir, restoreWorkDir, serverDir, type WorkDir } from './lib/files/workdir';
   import {
@@ -271,127 +273,6 @@
     (void $settingsMap, analysisSettings.settingFor($sonoTarget ?? 'all', 'sono').dynRangeDb),
   );
   let mode = $state<'box' | 'pan'>('box');
-
-  // Reference to the CURRENTLY MOUNTED primary PlotSurface (single / Bode
-  // magnitude / sono axes), bound in each plot branch below. The Export card
-  // reads its <svg> via `getSvg` to serialise the figure. One ref suffices:
-  // only one primary plot is mounted at a time (the branches are mutually
-  // exclusive), and it is re-bound as the view switches.
-  let plotRef = $state<PlotSurface | undefined>();
-  // Bode's SECOND pane (round-7c export audit): the phase PlotSurface gets
-  // its own ref so `getSvg` can composite BOTH panes — exporting only the
-  // bound magnitude pane silently dropped half the Bode figure.
-  let phaseRef = $state<PlotSurface | undefined>();
-  /**
-   * Active plot's root <svg>, or undefined when no plot is mounted.
-   *
-   * SONO EXPORT (linked-gap fix): the sonogram's heat map is a sibling
-   * `<canvas>` mounted BEHIND the axis SVG, so it is invisible to the
-   * SVG-string figure exporter (ExportCard serialises this element's
-   * `outerHTML` — a blank axes-only figure otherwise). For the sono view we
-   * return a CLONE of the live SVG with the heat composited in as a data-URL
-   * `<image>` sized to the inner data rect (margins L58/T16/R18/B42, matching
-   * PlotSurface), inserted just after the (transparent) plot-bg so the
-   * frame/ticks still draw on top. The on-screen SVG is untouched — only the
-   * exported serialisation carries the image — and the image has NO data-role,
-   * so figure.ts's dark/transparent recolouring leaves it alone. Non-sono views
-   * return the live SVG unchanged. `toDataURL` is same-origin (the heat is
-   * drawn from computed data, never a cross-origin image), so it never taints.
-   */
-  /**
-   * Append the LEGEND to an export SVG (round-7d): the on-screen legend is an
-   * HTML card outside the SVG, so exports never carried it. When the legend
-   * is toggled VISIBLE, the export clone gains an equivalent SVG legend at
-   * the same fractional position, listing the same drawn lines ('off' rows
-   * excluded — on screen they exist only to be clicked back on). `paneH`
-   * confines the placement to the FIRST pane of a composite (Bode: the
-   * on-screen legend lives in the magnitude pane). `el` must already be a
-   * detached clone/composite — it is mutated in place.
-   */
-  const appendExportLegend = (el: SVGSVGElement, paneH?: number): SVGSVGElement => {
-    const leg = get(currentSlice).legend;
-    if (!leg.visible) return el;
-    // `legendOverride` is the store WRAPPER the Legend component takes
-    // (TF out/in or CSD pair transform) — unwrap it for the string builder.
-    const entries = legendOverride ? get(legendOverride) : get(legendRows);
-    const vb = (el.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
-    const W = vb[2], H = paneH ?? vb[3];
-    if (!(W > 0) || !(H > 0)) return el;
-    const overlay = legendOverlaySvg(entries, { x: leg.x, y: leg.y }, { w: W, h: H });
-    if (overlay) el.insertAdjacentHTML('beforeend', overlay);
-    return el;
-  };
-
-  const getSvg = (): SVGSVGElement | undefined => {
-    const svg = plotRef?.getSvgElement();
-    // BODE EXPORT (round-7c audit fix): the view is TWO stacked PlotSurfaces
-    // but only the magnitude pane is bound to plotRef — a bare serialisation
-    // exported half the figure. Composite the two panes into one SVG by
-    // FLATTENING each pane's children into translated <g>s (both viewBoxes
-    // are plain 0 0 W H pixel spaces, so translation is exact; flattening —
-    // rather than nesting <svg> viewports — keeps svg2pdf's PDF path safe).
-    if (bode) {
-      const phase = phaseRef?.getSvgElement();
-      if (!svg || !phase) return svg;
-      const dims = (el: SVGSVGElement): [number, number] => {
-        const vb = (el.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
-        return [vb[2] ?? 0, vb[3] ?? 0];
-      };
-      const [w1, h1] = dims(svg);
-      const [w2, h2] = dims(phase);
-      if (!(w1 > 0) || !(h1 > 0) || !(w2 > 0) || !(h2 > 0)) return svg;
-      const NS = 'http://www.w3.org/2000/svg';
-      const combined = document.createElementNS(NS, 'svg');
-      combined.setAttribute('xmlns', NS);
-      combined.setAttribute('viewBox', `0 0 ${Math.max(w1, w2)} ${h1 + h2}`);
-      const pane = (el: SVGSVGElement, dy: number): SVGGElement => {
-        const g = document.createElementNS(NS, 'g');
-        if (dy) g.setAttribute('transform', `translate(0 ${dy})`);
-        const clone = el.cloneNode(true) as SVGSVGElement;
-        while (clone.firstChild) g.appendChild(clone.firstChild);
-        return g;
-      };
-      combined.append(pane(svg, 0), pane(phase, h1));
-      // The on-screen Bode legend lives in the magnitude pane: confine its
-      // export placement to the composite's TOP pane.
-      return appendExportLegend(combined, h1);
-    }
-    if (!svg || view === 'sono') {
-      // Sono keeps its dedicated heat-compositing path below — it mounts no
-      // legend on screen, so its export carries none either.
-      if (!svg || !sonoCanvas || !sono) return svg;
-    } else {
-      // Single-pane views (time / frequency / tf single / nyquist): legend
-      // goes onto a CLONE so the live plot is never touched.
-      return appendExportLegend(svg.cloneNode(true) as SVGSVGElement);
-    }
-    const vb = (svg.getAttribute('viewBox') ?? '').split(/\s+/).map(Number);
-    const W = vb[2], H = vb[3];
-    if (!(W > 0) || !(H > 0)) return svg;
-    let href: string;
-    try {
-      href = sonoCanvas.toDataURL('image/png');
-    } catch {
-      return svg; // unexpectedly tainted / empty — export axes only
-    }
-    const ML = 58, MT = 16, MR = 18, MB = 42;
-    const XLINK = 'http://www.w3.org/1999/xlink';
-    const clone = svg.cloneNode(true) as SVGSVGElement;
-    clone.setAttribute('xmlns:xlink', XLINK);
-    const img = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-    img.setAttribute('x', String(ML));
-    img.setAttribute('y', String(MT));
-    img.setAttribute('width', String(Math.max(0, W - ML - MR)));
-    img.setAttribute('height', String(Math.max(0, H - MT - MB)));
-    img.setAttribute('preserveAspectRatio', 'none');
-    img.setAttribute('image-rendering', 'pixelated');
-    img.setAttribute('href', href); // SVG2 (browser raster path)
-    img.setAttributeNS(XLINK, 'xlink:href', href); // SVG1.1 (svg2pdf → PDF)
-    const bg = clone.querySelector('[data-role="plot-bg"]');
-    if (bg?.parentNode) bg.parentNode.insertBefore(img, bg.nextSibling);
-    else clone.insertBefore(img, clone.firstChild);
-    return clone;
-  };
 
   // `?narrow=1` forces the narrow layout; `?fixture=1` auto-loads the
   // 2-channel impulse; `?fixture=3ch` auto-loads the 3-channel fixture
@@ -1162,10 +1043,34 @@
   };
 
   /**
+   * The sonogram's heat image as a PNG data URL for Save Figure, or null when
+   * the sono view is not showing a computed sonogram. The heat is a `<canvas>`
+   * behind the axis SVG, painted from computed data, so `toDataURL` is
+   * same-origin and does not taint; a failure prints the axes alone.
+   */
+  const sonoFigureImage = (): string | null => {
+    if (view !== 'sono' || !sonoCanvas || !sono) return null;
+    try {
+      return sonoCanvas.toDataURL('image/png');
+    } catch {
+      return null;
+    }
+  };
+
+  /**
    * Save Figure: the active plot as PNG and/or PDF, with the Export stage's
-   * format and background choices (`figureOptions`). Shared by the top bar's
-   * button (`base` null: ask for a name, as Save Dataset does) and the Export
-   * card's Export (`base`: the card's filename field).
+   * format, background and printed-width choices (`figureOptions`). Shared by
+   * the top bar's button (`base` null: ask for a name, as Save Dataset does)
+   * and the Export card's Export (`base`: the card's filename field).
+   *
+   * The figure is the PRINT layout (`printFigureSvg`), laid out again from the
+   * same models the plots render, at the chosen width: 10 pt labels, a 600 dpi
+   * PNG, a vector PDF with the figure font embedded. `viewFigureInput` maps the
+   * view state to the renderer's input (Bode as two panes, the sonogram's heat
+   * as the pane's image, the legend at its on-screen fractions when it is
+   * visible); it is snapshotted and laid out when the button is pressed, before
+   * any dialog, so a plot change while the dialog is open cannot change the
+   * file.
    *
    * In the served app the Save dialog always asks where, opening in the
    * working folder — ONE dialog even with both formats ticked (the two files
@@ -1175,8 +1080,9 @@
    * read as "nothing happens" (lab report, 2026-10-26).
    */
   const saveFigure = async (base: string | null): Promise<void> => {
-    const el = getSvg();
-    if (!el) {
+    // The Live stage shows the scope, not a plot; without data no plot is
+    // mounted either.
+    if (!hasData || get(activeStage) === 'live') {
       toasts.push('No plot to export yet — load data and pick a view first.', { level: 'info' });
       return;
     }
@@ -1186,8 +1092,21 @@
       toasts.push('Pick at least one figure format (PNG or PDF) in the Export stage.', { level: 'info' });
       return;
     }
-    // Serialise NOW: the plot can change while a dialog is open.
-    const svgText = el.outerHTML;
+    // Lay the figure out NOW: the plot can change while a dialog is open.
+    let fig: PrintFigure;
+    try {
+      fig = printFigureSvg(viewFigureInput({
+        view, bode, nyquist, model, phaseModel, sonoAxisModel, sonoImage: sonoFigureImage(),
+        legend: get(currentSlice).legend,
+        // `legendOverride` is the store WRAPPER the Legend component takes
+        // (TF out/in, CSD pair, or the rows without the fit sets).
+        entries: get(legendOverride ?? legendRows),
+        fitSetIds, widthMm: opts.widthMm,
+      }));
+    } catch (e) {
+      toasts.push(`Figure export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+      return;
+    }
     const suggested = `${base ?? defaultFigureName(new Date())}.${formats[0]}`;
     const server = workdir?.kind === 'server';
     const name = server
@@ -1196,17 +1115,23 @@
     if (!name?.trim()) return; // cancelled
     try {
       const saved: string[] = [];
+      const written: FigureFormat[] = [];
       for (const target of figureTargets(name.trim(), formats)) {
-        const blob = target.format === 'png'
-          ? await exportPng(svgText, opts.bg) : await exportPdf(svgText, opts.bg);
-        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const bytes = await figureBytes(fig, target.format, opts.bg);
         const where = server
           ? await serverWrite(target.name, bytes)
           : await (workdir ?? fallbackDir()).save(target.name, bytes);
         if (where === null) break;    // declined to replace: skip the rest too
         saved.push(where);
+        written.push(target.format);
       }
-      if (saved.length) toasts.push(`Saved ${saved.join(' and ')}`, { level: 'success' });
+      if (saved.length) {
+        // A typed name's extension can pick the format, so the notes follow
+        // what was written, not what was ticked.
+        const notes = figureNotes(fig, written);
+        toasts.push(`Saved ${saved.join(' and ')}${notes.grown ? `, ${notes.grown}` : ''}`, { level: 'success' });
+        if (notes.glyphs) toasts.push(notes.glyphs, { level: 'info' });
+      }
     } catch (e) {
       toasts.push(`Figure export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
     }
@@ -1900,7 +1825,7 @@
                    the RAW slice range, because `sonoAxisModel` resolves an auto
                    axis to the full extent before rendering — without it the
                    first gesture would pin the other axis (round-11 P5). -->
-              <PlotSurface bind:this={plotRef} model={sonoAxisModel} {mode} {viewState} overlay
+              <PlotSurface model={sonoAxisModel} {mode} {viewState} overlay
                 extentOverride={sonoGuardExtent ?? undefined}
                 priorRangeOverride={{ x: range.x, y: range.y }} />
               {#if $damping.open && sonoWindow && $damping.startTime !== null}
@@ -1934,7 +1859,7 @@
                 navControl={navView} navOpen={navOpen} onnavtoggle={() => viewState.setNavigator(view, !navOpen)} />
             </div>
             <div class="plot-area">
-              <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
+              <PlotSurface {model} {mode} {viewState} />
               <Legend {selection} {viewState} entriesOverride={legendOverride} />
               {#if $activeStage === 'fit'}<FitChip {modal} {actions} {selection} />{/if}
             </div>
@@ -1951,13 +1876,13 @@
           </div>
           {@render freqNav()}
           <div class="bode-pane">
-            <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
+            <PlotSurface {model} {mode} {viewState} />
             <Legend {selection} {viewState} entriesOverride={legendOverride} />
           </div>
           <div class="bode-pane">
             <!-- Phase pane: shares x, owns its y. Route gestures to phaseRange
                  so a phase box-zoom never distorts the magnitude pane (item 5). -->
-            <PlotSurface bind:this={phaseRef} model={phaseModel} {mode} {viewState}
+            <PlotSurface model={phaseModel} {mode} {viewState}
               onCommit={(r) => viewState.setBodePhaseRange(r.x, r.y)}
               onAutoFit={() => viewState.setPhaseRange({ x: null, y: null })} />
           </div>
@@ -1971,7 +1896,7 @@
           </div>
           {@render freqNav()}
           <div class="plot-area">
-            <PlotSurface bind:this={plotRef} {model} {mode} {viewState} />
+            <PlotSurface {model} {mode} {viewState} />
             <Legend {selection} {viewState} entriesOverride={legendOverride} />
             {#if $activeStage === 'fit'}<FitChip {modal} {actions} {selection} />{/if}
           </div>

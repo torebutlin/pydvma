@@ -193,14 +193,16 @@ test('exports follow the legend and coherence toggles (round-7d)', async ({ page
   await page.mouse.move(6, 560);
   await expect(page.getByTestId('axis-popover')).toHaveCount(0);
   const noLegend = await exportPngBuf();
-  // The legend card is SMALL relative to the 3x-scale raster (~0.23%
-  // measured); exports are deterministic, so any stable diff IS the legend.
-  expect(await pngPixelDiffFrac(page, both, noLegend)).toBeGreaterThan(0.0015);
+  // The legend card is SMALL relative to the 160 mm, 600 dpi print figure
+  // (0.41 % of the pixels measured, 2026-11-24); exports are deterministic,
+  // so any stable diff IS the legend. Threshold: half the measured value.
+  expect(await pngPixelDiffFrac(page, both, noLegend)).toBeGreaterThan(0.002);
 
-  // Coherence off: the dashed overlay + right axis leave the export too.
+  // Coherence off: the dashed overlay + right axis leave the export too
+  // (5.3 % of the pixels measured; threshold half that).
   await page.getByLabel('coherence overlay').uncheck();
   const noCoherence = await exportPngBuf();
-  expect(await pngPixelDiffFrac(page, noLegend, noCoherence)).toBeGreaterThan(0.005);
+  expect(await pngPixelDiffFrac(page, noLegend, noCoherence)).toBeGreaterThan(0.026);
 
   // Both back on: the export returns to the baseline (same size + content).
   await page.getByLabel('coherence overlay').check();
@@ -228,19 +230,21 @@ test('Bode Save Figure exports BOTH panes (round-7c: the phase pane was silently
     return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
   };
 
-  // Baseline: the single-pane magnitude export fills the whole plot host.
+  // Baseline: the single-pane magnitude figure, 160 mm at 600 dpi and 16:9.
   const mag = await exportPngDims();
+  expect(mag.w).toBe(3780);
+  expect(Math.abs(mag.h - 2126)).toBeLessThanOrEqual(2);
 
-  // Bode: two HALF-height panes stack in the same host, so the composited
-  // export is ~the full host height again. The old bug exported only the
-  // magnitude pane — i.e. ~HALF the baseline height — so full-height at the
-  // same width is the discriminating signal that both panes are present.
+  // Bode prints magnitude over phase as ONE 4:3 figure at the same width, so
+  // it is taller than the 16:9 magnitude-only figure: 3780 × 2835 px. The old
+  // bug exported only the magnitude pane; a 16:9 height here would mean the
+  // phase pane was dropped again.
   await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
   await page.getByLabel('plot type').selectOption('bode');
   await expect(page.locator('.bode-pane')).toHaveCount(2);
   const bode = await exportPngDims();
-  expect(bode.w).toBe(mag.w);
-  expect(bode.h).toBeGreaterThan(mag.h * 0.85);
+  expect(bode.w).toBe(3780);
+  expect(Math.abs(bode.h - 2835)).toBeLessThanOrEqual(2);
 });
 
 test('orphan-only tray disables Calc Sonogram with a clear note', async ({ page }) => {
@@ -740,10 +744,11 @@ test.describe('@engine', () => {
   /**
    * Linked export gap (fixed alongside the on-screen bug): the sonogram heat is
    * a sibling `<canvas>`, invisible to the SVG-string figure exporter, so a
-   * sono figure USED to export as blank axes only. App's `getSvg` now composites
-   * the heat into the export SVG as a data-URL <image>. Export a PNG through the
-   * real Export-stage flow (fallback download) and assert the raster contains
-   * viridis colour — not a blank white figure.
+   * sono figure USED to export as blank axes only. Save Figure now hands the
+   * canvas's PNG to the print renderer as the pane's image (`viewFigureInput`),
+   * drawn over the data rect. Export a PNG through the real Export-stage flow
+   * (fallback download) and assert the raster contains viridis colour — not a
+   * blank white figure.
    */
   test('fixture → Sonogram → Calc → Export PNG contains the heat map', async ({ page }) => {
     await page.goto('/?fixture=1');
@@ -753,8 +758,8 @@ test.describe('@engine', () => {
     await expect(page.getByTestId('sono-canvas')).toBeVisible({ timeout: 200_000 });
     await expect.poll(() => sonoPaintFrac(page), { timeout: 200_000 }).toBeGreaterThan(0.9);
 
-    // Export stage keeps the sono VIEW (its stage has view:null), so getSvg
-    // still targets the sono plot. PNG is the default-checked format.
+    // Export stage keeps the sono VIEW (its stage has view:null), so Save
+    // Figure still prints the sono plot. PNG is the default-checked format.
     await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'Export' }).click();
     const region = page.getByRole('region', { name: 'Export stage controls' });
     const downloadPromise = page.waitForEvent('download');

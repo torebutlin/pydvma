@@ -31,7 +31,6 @@
  */
 import { PRINT_CHROME } from '../plot/chrome';
 import { legendWrapColumns } from '../plot/legendGrid';
-import type { LegendEntry } from '../stores/selection';
 import { FONT_ASCENT, FONT_DESCENT, measureText } from './figureFont';
 import type { PrintLegend, PrintLegendEntry, PrintText, PtBox } from './printFigure';
 import {
@@ -334,18 +333,4 @@ function fitLabel(text: string, sizePt: number, maxPt: number): string {
 /** `v` kept in `[lo, hi]` (`lo` wins when the range is empty). */
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(v, hi));
-}
-
-/**
- * @deprecated The old screen-export legend. It now draws nothing, so a
- * screen-path figure export has no legend; Task 7 of the publication-figure
- * plan removes this shim together with App's `appendExportLegend`, its only
- * caller. Use `layoutPrintLegend` through `printFigureSvg` instead.
- */
-export function legendOverlaySvg(
-  _entries: readonly LegendEntry[],
-  _pos: { x: number; y: number },
-  _canvas: { w: number; h: number },
-): string {
-  return '';
 }

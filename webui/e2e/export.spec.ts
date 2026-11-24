@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import { expect, test, type Download, type Page, type TestInfo } from '@playwright/test';
 
 /**
@@ -13,11 +14,12 @@ import { expect, test, type Download, type Page, type TestInfo } from '@playwrig
  * stage in the ribbon.
  *
  * These assert both the plumbing (a download of the right name fires per
- * checked format) AND that the written file is non-trivially sized — so a
- * valid-named-but-BLANK export (exactly where a rendering regression lands)
- * fails here rather than passing on the filename alone. The pixel-level proof
- * (white / transparent / dark actually render + differ) is the browser live
- * smoke done during development; these size floors are the cheap CI guard.
+ * checked format) AND what was written: Save Figure writes the PRINT layout
+ * (`lib/export/printFigure.ts`) at the Export stage's printed width (160 mm
+ * by default), so a PNG is 600 dpi — `round(160 / 25.4 × 600)` = 3780 px wide,
+ * 16:9 tall, with a `pHYs` chunk saying so — and a PDF embeds the figure font.
+ * A valid-named-but-BLANK export (exactly where a rendering regression lands)
+ * still fails on the size floors rather than passing on the filename alone.
  */
 
 /** Byte size of a completed download's saved file (fallback path). */
@@ -25,6 +27,47 @@ async function downloadSize(download: Download): Promise<number> {
   const path = await download.path();
   expect(path).toBeTruthy();
   return statSync(path!).size;
+}
+
+/** The bytes of a completed download's saved file (fallback path). */
+async function downloadBytes(download: Download): Promise<Buffer> {
+  const path = await download.path();
+  expect(path).toBeTruthy();
+  return readFileSync(path!);
+}
+
+/**
+ * The BaseFont of every font a PDF page's text is set in: inflates each
+ * FlateDecode stream, collects the resource names its `Tf` operators select,
+ * and looks each up in the page's `/Font` resources. Enough for jsPDF's
+ * one-page, uncompressed-dictionary output; not a general PDF reader.
+ */
+function pdfFontsUsed(pdf: Buffer): string[] {
+  const text = pdf.toString('latin1');
+  const resources = /\/Font <<([^>]*)>>/.exec(text)?.[1] ?? '';
+  const objOf = new Map([...resources.matchAll(/\/(F\d+) (\d+) 0 R/g)].map((m) => [m[1], m[2]]));
+  const baseFont = (obj: string): string | undefined => {
+    const body = new RegExp(`(?:^|\\n)${obj} 0 obj([^]*?)endobj`).exec(text)?.[1] ?? '';
+    return /\/BaseFont \/(\S+)/.exec(body)?.[1];
+  };
+  const names = new Set<string>();
+  for (const m of text.matchAll(/\/FlateDecode\s*>>\s*stream\r?\n/g)) {
+    // This stream's own /Length: the last one before its `stream` keyword.
+    const len = Number([...text.slice(Math.max(0, m.index - 200), m.index).matchAll(/\/Length (\d+)/g)].at(-1)?.[1]);
+    if (!(len > 0)) continue;
+    const start = m.index + m[0].length;
+    let content: string;
+    try { content = inflateSync(pdf.subarray(start, start + len)).toString('latin1'); } catch { continue; }
+    for (const t of content.matchAll(/\/(F\d+) [\d.]+ Tf/g)) names.add(t[1]);
+  }
+  return [...names].map((n) => baseFont(objOf.get(n) ?? '') ?? `?${n}`);
+}
+
+/** Click the Export stage card's Export button and wait for the one download. */
+async function exportOne(page: Page): Promise<Download> {
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('region', { name: 'Export stage controls' }).getByRole('button', { name: 'Export', exact: true }).click();
+  return downloadPromise;
 }
 
 /** Load the fixture and open the Export stage; returns once the plot is up. */
@@ -43,13 +86,29 @@ test('Export stage → PNG → Export downloads a .png', async ({ page }) => {
   // PNG is the default-checked format; PDF is off. Export → one .png. The
   // card's execute button is "Export" (scoped to the card; the ribbon also
   // has an "Export" stage button).
-  const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('region', { name: 'Export stage controls' }).getByRole('button', { name: 'Export', exact: true }).click();
-  const download = await downloadPromise;
+  const download = await exportOne(page);
   expect(download.suggestedFilename()).toMatch(/\.png$/);
-  // Non-empty: a real rasterised figure is tens of KB; a blank/failed export
-  // would be near-zero. Floor well under the observed ~150 KB, above trivial.
-  expect(await downloadSize(download)).toBeGreaterThan(1000);
+  const png = await downloadBytes(download);
+  // 160 mm at 600 dpi, 16:9: 3780 × 2126 px (the height to ±2 px of rounding).
+  expect(png.readUInt32BE(16)).toBe(3780);
+  expect(Math.abs(png.readUInt32BE(20) - 2126)).toBeLessThanOrEqual(2);
+  // The resolution is stamped: a pHYs chunk straight after IHDR (byte 33),
+  // 23622 px/m (600 dpi) on both axes, unit 1 (metre).
+  expect(png.subarray(37, 41).toString('latin1')).toBe('pHYs');
+  expect(png.readUInt32BE(41)).toBe(23622);
+  expect(png.readUInt32BE(45)).toBe(23622);
+  expect(png[49]).toBe(1);
+  // Non-empty, yet not a nuisance to attach or upload: under 1 MB.
+  expect(png.length).toBeGreaterThan(1000);
+  expect(png.length).toBeLessThan(1_000_000);
+});
+
+test('a 90 mm figure is 2126 px wide', async ({ page }) => {
+  await openExport(page);
+  await page.getByTestId('fig-width-90').click();
+  const png = await downloadBytes(await exportOne(page));
+  // round(90 / 25.4 × 600) = 2126.
+  expect(png.readUInt32BE(16)).toBe(2126);
 });
 
 test('Export stage → PDF only → Export downloads a .pdf', async ({ page }) => {
@@ -59,13 +118,23 @@ test('Export stage → PDF only → Export downloads a .pdf', async ({ page }) =
   await page.getByRole('checkbox', { name: 'PNG' }).uncheck();
   await page.getByRole('checkbox', { name: 'PDF' }).check();
 
-  const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('region', { name: 'Export stage controls' }).getByRole('button', { name: 'Export', exact: true }).click();
-  const download = await downloadPromise;
+  const download = await exportOne(page);
   expect(download.suggestedFilename()).toMatch(/\.pdf$/);
-  // A real vector PDF of this figure is tens of KB (~75 KB observed); floor at
-  // 1 KB catches an empty/blank-page PDF while staying robust.
-  expect(await downloadSize(download)).toBeGreaterThan(1000);
+  const pdf = await downloadBytes(download);
+  // A 1 KB floor catches an empty/blank-page PDF while staying robust.
+  expect(pdf.length).toBeGreaterThan(1000);
+  // The figure font is embedded (a TrueType FontFile2 under its own name), so
+  // the labels print in it wherever the PDF is opened. jsPDF writes the family
+  // 'Pydvma Figure Serif' as a PDF name, each space escaped as #20.
+  const text = pdf.toString('latin1');
+  expect(text).toContain('/FontFile2');
+  expect(text).toContain('/FontName /Pydvma#20Figure#20Serif');
+  // And every text on the page is set in it: each `Tf` in the page's content
+  // stream picks the font resource whose BaseFont is the figure font (the
+  // standard 14 fonts jsPDF always lists stay unused).
+  const used = pdfFontsUsed(pdf);
+  expect(used.length).toBeGreaterThan(0);
+  expect(new Set(used)).toEqual(new Set(['Pydvma#20Figure#20Serif']));
 });
 
 test('the top-bar Save Figure asks for a name and saves the current plot', async ({ page }) => {
