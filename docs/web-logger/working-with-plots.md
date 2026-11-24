@@ -50,10 +50,10 @@ are off stay listed, struck through, so you can bring them back.
 
 Choose a corner in [the toolbar's panel](#the-zoom-toolbar), or drag
 the legend anywhere. A corner places it inside the axes, 8 px clear of
-their frame, so it never covers the tick numbers; **Outside** places it
-just right of the axes. A legend you drag may sit over the margins, but
-it stays inside the plot. With more than
-ten lines it flows into two or three columns. A small button in its
+their frame, so it never covers the tick numbers; **Outside** puts it at
+the top right, overhanging the right edge of the axes a little. A legend
+you drag may sit over the margins, but it stays inside the plot. With
+more than ten lines it flows into two or three columns. A small button in its
 corner (visible on hover) switches to a **compact** view: a grid of
 coloured dots with one row per set and one column per channel. Each dot
 works like its full row, and hovering shows the full label. The legend
