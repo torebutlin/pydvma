@@ -250,8 +250,9 @@ large legend needs the room, and the save message then says so.
 The figure shows what the plot shows: the legend, when it is on, without
 hidden lines; the coherence overlay and its right-hand axis, when they
 are on; both panes of a Bode plot; and the heat map of a sonogram. The
-legend sits where it does on screen, inside the axes; a legend too big
-for the plot goes below it.
+legend sits where it does on screen, inside the axes (a legend dragged
+over the margins is drawn just inside the axes in the saved figure); a
+legend too big for the plot goes below it.
 
 The type is STIX Two Text, a Times-style face, and it is the same in the
 PNG and the PDF on every machine. A character the face lacks (in a set

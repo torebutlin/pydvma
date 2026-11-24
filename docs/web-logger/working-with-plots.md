@@ -62,7 +62,8 @@ inside it, and when the plot gets smaller the legend moves back inside
 it.
 
 A saved figure shows the legend where it sits on screen, with every row
-written out (never the compact dots). A legend too big for the printed
+written out (never the compact dots); a legend dragged over the margins is
+drawn just inside the axes. A legend too big for the printed
 axes goes below them instead; see
 [Export figures](export.md#export-figures).
 
