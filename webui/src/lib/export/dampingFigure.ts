@@ -130,8 +130,8 @@ export function dampingDecayFigure(p: DampingPeaksResult, widthMm: number): Prin
   return figure(model, entries, widthMm);
 }
 
-/** A band's centre frequency as its legend label: one decimal below 10 Hz, else three significant figures. */
-const bandLabel = (fc: number): string => `${fc < 10 ? fc.toFixed(1) : String(Number(fc.toPrecision(3)))} Hz`;
+/** A band's centre frequency as its legend label: one decimal below 10 Hz, else none. */
+const bandLabel = (fc: number): string => `${fc < 10 ? fc.toFixed(1) : fc.toFixed(0)} Hz`;
 
 /**
  * The band energy-decay curves as a figure: one curve per band in its palette

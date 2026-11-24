@@ -77,6 +77,11 @@ describe('dampingFigure', () => {
     expect(i.legend!.entries[2].color).toBe('#6b7280');
   });
 
+  it('EDC band labels: 1 dp below 10 Hz, else whole hertz', () => {
+    const b = { bandData: [band(12.59, false, null), band(1258.9, false, null), band(9.96, false, null)] } as unknown as DampingBandsResult;
+    expect(dampingEdcFigure(b, 160)!.legend!.entries.map((e) => e.label)).toEqual(['13 Hz', '1259 Hz', '10.0 Hz']);
+  });
+
   it('nothing to draw, no figure', () => {
     expect(dampingSpectrumFigure({ ...peaks, sliceFreq: F([]), sliceMag: F([]) }, 160)).toBeNull();
     expect(dampingDecayFigure({ ...peaks, fits: [] }, 160)).toBeNull();
