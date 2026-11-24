@@ -23,7 +23,7 @@
   --control-bg: #ffffff;
   --hover-bg: #f2f4f8;
   --hover: #f2f4f8; /* legacy alias used by a few components */
-  --grid: #eef0f4; /* SVG plot gridline (on-screen; export keeps CHROME.grid) */
+  --grid: #eef0f4; /* SVG plot gridline (on-screen; matches CHROME.grid) */
   --overlay-bg: rgba(255, 255, 255, 0.94); /* floating translucent panels */
   --scrim: rgba(23, 32, 58, 0.42); /* modal backdrop */
 
@@ -48,9 +48,9 @@
   --pink: #be185d;
 
   /* Canvas-renderer chrome — read via getComputedStyle at draw time
-     (OscCanvas / FftCanvas / LevelBars). The exported SVG figure is
-     theme-independent (figure.ts keys off the fixed CHROME constants), so
-     these only affect the live on-screen canvases. */
+     (OscCanvas / FftCanvas / LevelBars). Saved figures are
+     theme-independent (the print renderer stamps the fixed PRINT_CHROME
+     constants), so these only affect the live on-screen canvases. */
   --canvas-bg: #ffffff;
   --canvas-grid: #eef0f4;
   --canvas-frame: #d1d5db;

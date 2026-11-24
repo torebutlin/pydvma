@@ -230,9 +230,9 @@
 </script>
 
 {#snippet frame(w: number, h: number, dom: MiniDomain, xlab: string, ylab: string)}
-  <!-- Chart chrome per the self-contained-SVG contract: plot-bg rect + axis
-       elements with inline CHROME hexes (scoped CSS wins on screen; the
-       inline values make a serialised save restyle like the main figure). -->
+  <!-- Chart chrome: plot-bg rect + axis elements with inline CHROME hexes
+       (scoped CSS wins on screen). A chart's Save draws a print figure from
+       the same data (lib/export/dampingFigure.ts), not from this SVG. -->
   <rect data-role="plot-bg" class="mini-bg" x="0" y="0" width={w} height={h} fill={CHROME.bg} />
   <rect data-role="axis" x={ML} y={MT} width={iw(w)} height={ih(h)} class="mini-frame"
     fill="none" stroke={CHROME.frame} />
@@ -639,8 +639,8 @@
   }
   .dp-close:hover { background: var(--hover-bg); color: var(--text); }
 
-  /* Chart chrome: scoped CSS beats the inline export hexes on screen, so the
-     charts stay theme-aware while a serialised save is self-contained. */
+  /* Chart chrome: scoped CSS beats the inline CHROME hexes on screen, so the
+     charts follow the app theme. */
   .mini-bg { fill: var(--surface); }
   .mini-frame { stroke: var(--border); }
   .mini-tick {

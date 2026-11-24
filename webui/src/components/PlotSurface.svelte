@@ -38,20 +38,19 @@
    * The parent must derive `model.xRange`/`model.yRange` from
    * `viewState.current.range` for committed gestures to take effect.
    *
-   * Export hooks: the root <svg> carries `data-testid="plot-svg"`,
+   * Test hooks: the root <svg> carries `data-testid="plot-svg"`,
    * each line `data-testid="plot-line"`, the rubber band
    * `data-testid="rubber-band"` (Playwright), the background rect
    * `data-role="plot-bg"` and every piece of axis chrome
-   * `data-role="axis"` (the figure exporter restyles by these tags).
+   * `data-role="axis"`.
    *
-   * Self-contained-SVG rule (Task 14, decision A): the plot-bg and axis
-   * chrome carry INLINE fill/stroke hexes (CHROME.*) in ADDITION to their
-   * scoped CSS classes. On-screen the scoped CSS wins (CSS beats
-   * presentation attributes), so the visible plot is unchanged; but a
-   * standalone `getSvgElement().outerHTML` — which loses the scoped
-   * style block — still renders correctly, and the figure exporter's
-   * regexes find real hexes to restyle. The hexes come from the shared
-   * CHROME (../lib/plot/chrome), which figure.ts also keys its dark map off.
+   * Save Figure does NOT serialise this SVG: it lays the same `PlotModel`
+   * out again for print (`lib/export/printFigure.ts`, through the same
+   * `buildPlot`). The plot-bg and axis chrome still carry INLINE fill/stroke
+   * hexes (CHROME.*, ../lib/plot/chrome) beside their scoped CSS classes, a
+   * leftover of the old screen-SVG export: on screen the scoped CSS wins
+   * (CSS beats presentation attributes), so they change nothing visible,
+   * and the serialised SVG stays theme-independent (e2e theme.spec).
    *
    * Visual treatment ported from dev/mockups/round2-bench.html:
    * margins L58/T16/B42, R18 (56 with a right axis), #eef0f4
@@ -181,19 +180,12 @@
   const clipId = `plot-clip-${uid}`;
 
   // CHROME (from ../lib/plot/chrome) holds the inline fill/stroke hexes stamped
-  // on plot-bg + axis elements (decision A) so a serialised export SVG is self-
-  // contained; on-screen the scoped CSS still governs. figure.ts's DARK_MAP is
-  // keyed off these same values — one source, no drift.
+  // on plot-bg + axis elements; on screen the scoped CSS governs.
 
   let host: HTMLDivElement | undefined = $state();
   let svgEl: SVGSVGElement | undefined = $state();
   let width = $state(0);
   let height = $state(0);
-
-  /** Root <svg> element, serialised by the figure exporter (Task 14). */
-  export function getSvgElement(): SVGSVGElement | undefined {
-    return svgEl;
-  }
 
   /** The parent element's content size (the plot host this surface fills),
    *  for the `frame` output: when the host is smaller than the surface's
@@ -677,8 +669,7 @@
      `.plot-bg` rule above renders the rect opaque `--surface` and hides the heat
      entirely. This higher-specificity rule (matches only when `overlay`) is what
      actually makes the overlay transparent — without it the sonogram is a blank
-     white/dark plot (the longstanding white-sonogram bug). The serialised export
-     SVG still carries the inline fill="transparent", so decision A is unaffected. */
+     white/dark plot (the longstanding white-sonogram bug). */
   .plot-bg.overlay-bg {
     fill: transparent;
   }
@@ -687,8 +678,8 @@
     stroke: var(--border, #e3e6eb);
   }
   .grid {
-    /* On-screen only; the exported SVG carries the fixed CHROME.grid inline
-       attr (theme-independent export). */
+    /* On-screen colour; the SVG also carries the fixed CHROME.grid inline
+       attr, which this rule overrides. */
     stroke: var(--grid);
   }
   .tick {

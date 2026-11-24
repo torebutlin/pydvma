@@ -1,9 +1,11 @@
 // chrome.ts — the plot's chrome (background + axis) colours, in ONE place.
 //
-// These are the inline presentation-attribute hexes PlotSurface stamps on its
-// plot-bg and axis elements so a serialised export SVG is self-contained
-// (figure.ts restyles by them). They are the resolved values of the app.css
-// design tokens the on-screen scoped CSS uses — keep them in sync by hand:
+// These are the inline presentation-attribute hexes PlotSurface (and the
+// damping charts) stamp on their plot-bg and axis elements; on screen the
+// scoped CSS overrides them. Figures are drawn by the print renderer in
+// PRINT_CHROME (below), not from the screen SVG. They are the resolved values
+// of the app.css design tokens the on-screen scoped CSS uses — keep them in
+// sync by hand:
 //
 //   bg    = --surface        (#ffffff)
 //   grid  = the .grid literal (#eef0f4)   ← not a token; a literal in app.css
