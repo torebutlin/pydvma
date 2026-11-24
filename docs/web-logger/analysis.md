@@ -297,8 +297,10 @@ change any control.
 On a wide screen the panel's charts stack in a column beside the
 sonogram. Click a chart, or its **⤢** button, to expand it over the plot
 area, and click again to restore it. Each chart has a **save** button that
-writes a PNG styled like the main figures, delivered the same way as
-**Save Figure**, and the bands table saves as CSV.
+saves the chart with the Export stage's figure options (format, background
+and width), legend included, delivered the same way as **Save Figure**; the
+energy-decay chart keeps each band's cut tick, as on screen. The bands
+table saves as CSV.
 
 ## Resolution and averaging
 

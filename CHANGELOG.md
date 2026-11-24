@@ -52,6 +52,31 @@ follows [semantic versioning](https://semver.org/).
   `Best match onto <reference>: <card> ×f` and no longer lists the
   reference's ×1. With only the reference loaded it says there is
   nothing to rescale.
+- **Save Figure writes publication figures.** It used to save a scaled
+  copy of the plot on screen: at A4 text width its type printed at about
+  4 pt, and its size followed the browser window. The figure is now laid
+  out again for a printed width, 160 mm by default and set in the Export
+  stage (quick picks 90, 140, 160 and 190 mm), in STIX Two Text with
+  10 pt axis labels and 9 pt numbers and legend. Its shape follows the
+  plot type: 16:9, Bode 4:3 (magnitude over phase) and Nyquist 1:1; it
+  grows taller only when a long label or a big legend needs the room, and
+  the save message says so. The PNG is 600 dpi and tagged 600 dpi, so Word
+  and LaTeX place it at its printed size; the PDF is vector with the font
+  embedded, so γ and superscripts such as m/s⁴ print. The legend sits
+  where it does on screen, inside the axes, or below them when it is too
+  big for the plot. The damping panel's three charts save the same way,
+  with their legends, and the energy-decay chart marks each band's cut,
+  as on screen.
+
+### Fixed
+
+- The legend's corner presets (SE by default) sit inside the axes, 8 px
+  clear of the frame, instead of over the corner tick numbers. A dragged
+  legend may still sit over the margins, but it stays inside the plot.
+- The coherence axis label on the right of the TF view is no longer cut
+  off at the plot's edge.
+- A figure save that wrote its PNG and then failed on the PDF now says the
+  PNG was saved, instead of reading as though nothing was written.
 
 ## 2.9.1 — 2026-11-09
 

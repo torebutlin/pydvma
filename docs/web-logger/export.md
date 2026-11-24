@@ -214,10 +214,20 @@ a whole dataset or one list (`data.tf_data_list`). See
 
 ## Export figures
 
-The **Export** stage writes the plot you are looking at. Set:
+The **Export** stage writes the plot you are looking at, laid out again
+for print rather than copied from the screen, so the file does not depend
+on the size of your browser window. Set:
 
-- **figure format**: **PNG** (a raster image at three times the on-screen
-  size, ticked by default) and **PDF** (vector). Tick both to write both;
+- **figure format**: **PNG** (ticked by default), a raster image at
+  600 dpi, tagged 600 dpi so Word and LaTeX place it at its printed size;
+  and **PDF**, vector, with its font embedded. Tick both to write both;
+- **figure width**: the width the figure will print at, 160 mm by default
+  (A4 with 25 mm margins), with quick picks **90**, **140**, **160** and
+  **190** mm (a single column, one and a half columns, A4 text width and
+  a double column). The figure is laid out for that width, so its axis
+  labels print at 10 pt and its numbers and legend at 9 pt. Set the width
+  the paper uses rather than scaling the file afterwards, which would
+  scale the type with it;
 - **background**: **white** (the default), **transparent** or **dark**.
   **Dark** recolours the axes and labels for a dark background and keeps
   your data lines, which suits slides. It has no connection with the
@@ -227,15 +237,26 @@ The **Export** stage writes the plot you are looking at. Set:
   time.
 
 Then press **Export**, or press **Save Figure** in the header from any
-stage: it asks for a name and uses the same format and background. In
-the served app's save dialog, typing a name ending in `.pdf` or `.png`
-saves that format; with both formats ticked, one name saves both files
-side by side.
+stage: it asks for a name and uses the same format, width and
+background. In the served app's save dialog, typing a name ending in
+`.pdf` or `.png` saves that format; with both formats ticked, one name
+saves both files side by side.
 
-The figure shows what the plot shows: the legend, when it is on, at its
-place on screen and without hidden lines; the coherence overlay and its
-right-hand axis, when they are on; both panes of a Bode plot; and the
-heat map of a sonogram.
+The figure's shape follows the plot type: 16:9 for most plots, 4:3 for a
+Bode plot (magnitude over phase, sharing the frequency axis) and square
+for a Nyquist plot. It grows taller only when a long axis label or a
+large legend needs the room, and the save message then says so.
+
+The figure shows what the plot shows: the legend, when it is on, without
+hidden lines; the coherence overlay and its right-hand axis, when they
+are on; both panes of a Bode plot; and the heat map of a sonogram. The
+legend sits where it does on screen, inside the axes; a legend too big
+for the plot goes below it.
+
+The type is STIX Two Text, a Times-style face, and it is the same in the
+PNG and the PDF on every machine. A character the face lacks (in a set
+name, say) prints as a box in the PDF, and a message names it; the PNG
+shows it.
 
 ## Where files go
 

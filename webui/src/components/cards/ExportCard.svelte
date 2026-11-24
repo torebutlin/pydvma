@@ -5,8 +5,9 @@
    *
    *   - Save Dataset — delegates to the header's dataset-save handler
    *     (`onsave`), so there is one code path for writing the .dvma.
-   *   - Save Figure — export the CURRENT plot's SVG as PNG and/or PDF,
-   *     with a white / transparent / dark background, to the working dir
+   *   - Save Figure — lay the CURRENT plot out again for print and write
+   *     it as PNG and/or PDF, on a white / transparent / dark background, to
+   *     the working dir
    *     (or a browser download in fallback mode). PNG and PDF are
    *     independent checkboxes: tick both and BOTH files are written (no
    *     silent two-for-one). The choices live in the shared `figureOptions`
@@ -14,8 +15,9 @@
    *     unmounts with its stage); the write is App's `saveFigure`
    *     (`onsavefigure`), handed this card's filename. A width field (mm,
    *     40-300, default 160, quick picks 90/140/160/190) sets the printed
-   *     width the figure is laid out for; it is clamped on blur. The restyle +
-   *     rasterise / vectorise lives in src/lib/export/figure.ts.
+   *     width the figure is laid out for; it is clamped on blur. The layout
+   *     lives in src/lib/export/printFigure.ts, the restyle + rasterise /
+   *     vectorise in src/lib/export/figure.ts.
    *   - Autosave — a toggle bound to the app's `autosaveEnabled` $state
    *     (threaded down as a bindable prop). This is where Task 13a's
    *     autosave switch finally gets a UI.

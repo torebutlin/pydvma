@@ -48,14 +48,23 @@ A **legend** floats over the plot with one row per line. Click a row to
 cycle that line **on**, **faded**, **off**, as in the tray. Lines that
 are off stay listed, struck through, so you can bring them back.
 
-Drag the legend anywhere, or choose a corner in
-[the toolbar's panel](#the-zoom-toolbar). With more than
+Choose a corner in [the toolbar's panel](#the-zoom-toolbar), or drag
+the legend anywhere. A corner places it inside the axes, 8 px clear of
+their frame, so it never covers the tick numbers; **Outside** places it
+just right of the axes. A legend you drag may sit over the margins, but
+it stays inside the plot. With more than
 ten lines it flows into two or three columns. A small button in its
 corner (visible on hover) switches to a **compact** view: a grid of
 coloured dots with one row per set and one column per channel. Each dot
 works like its full row, and hovering shows the full label. The legend
-never grows past the plot: when its lines do not fit, they scroll inside
-it, and when the plot gets smaller the legend moves back inside it.
+never grows taller than the axes: when its lines do not fit, they scroll
+inside it, and when the plot gets smaller the legend moves back inside
+it.
+
+A saved figure shows the legend where it sits on screen, with every row
+written out (never the compact dots). A legend too big for the printed
+axes goes below them instead; see
+[Export figures](export.md#export-figures).
 
 ## The zoom toolbar
 
