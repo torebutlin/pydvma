@@ -185,3 +185,38 @@ describe('printFigureSvg, data line joins', () => {
     expect(printFigureSvg({ panes: [{ model: m }], kind: 'default', widthMm: 160 }).svg).not.toContain('linejoin');
   });
 });
+
+describe('printFigureSvg, legend', () => {
+  it('a legend below the axes grows the figure and stays on the canvas', () => {
+    const entries = Array.from({ length: 30 }, (_, i) => ({ label: `mode ${i}, Qn = 100`, color: '#2563eb', style: 'xline' as const, faded: false }));
+    const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 90, legend: { entries, placement: { kind: 'best' } } });
+    expect(f.legendBox!.below).toBe(true); expect(f.grown).toBe(true); inside(f);
+    expect(f.legendBox!.y + f.legendBox!.h).toBeLessThanOrEqual(f.heightPt + 0.01);
+  });
+  it('the Bode legend sits in the magnitude pane', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }, { model: phaseModel() }], kind: 'bode', widthMm: 160,
+      legend: { entries: [{ label: 'a', color: '#dc2626', style: 'line', faded: false }], placement: { kind: 'position', x: 0.98, y: 0.98 } } });
+    expect(f.legendBox!.y + f.legendBox!.h).toBeLessThanOrEqual(f.frames[0].y + f.frames[0].h);
+  });
+  it('a legend card lists its texts, keeps the aspect, and is drawn last', () => {
+    const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160,
+      legend: { entries: [{ label: 'noise · ch_1/ch_0', color: '#dc2626', style: 'line', faded: false }], placement: { kind: 'position', x: 0.98, y: 0.98 } } });
+    expect(f.grown).toBe(false); expect(f.heightPt).toBeCloseTo(f.widthPt * 9 / 16, 6);
+    expect(f.texts.filter((t) => t.role === 'legend').map((t) => t.text)).toEqual(['noise · ch_1/ch_0']);
+    expect(f.legendBox!.below).toBe(false);
+    expect(f.svg.lastIndexOf('class="legend"')).toBeGreaterThan(f.svg.lastIndexOf('class="frame"'));
+    expect(printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 }).legendBox).toBeNull();
+  });
+  it("'best' avoids the corner the data runs through", () => {
+    // A line along the bottom-right: se and sw are covered, the top corners are empty.
+    const m = tfModel({ y2Range: undefined, y2Label: undefined });
+    const x = Array.from({ length: 501 }, (_, i) => i);
+    m.lines = [{ x, y: x.map(() => -65), color: '#dc2626', opacity: 1, width: 1.5, dashed: false, yAxis: 'left', xMonotonic: true }];
+    const f = printFigureSvg({ panes: [{ model: m }], kind: 'default', widthMm: 160,
+      legend: { entries: [{ label: 'a', color: '#dc2626', style: 'line', faded: false }], placement: { kind: 'best' } } });
+    const fr = f.frames[0];
+    expect(f.legendBox!.below).toBe(false);
+    expect(f.legendBox!.y).toBeLessThan(fr.y + fr.h / 2);           // ne, the first empty corner
+    expect(f.legendBox!.x).toBeGreaterThan(fr.x + fr.w / 2);
+  });
+});

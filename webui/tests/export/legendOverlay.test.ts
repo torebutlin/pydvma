@@ -1,71 +1,78 @@
 import { describe, expect, it } from 'vitest';
-import { legendOverlaySvg } from '../../src/lib/export/legendOverlay';
-import { CHROME } from '../../src/lib/plot/chrome';
-import type { LegendEntry } from '../../src/lib/stores/selection';
+import { layoutPrintLegend, LEGEND_INSET_PT } from '../../src/lib/export/legendOverlay';
+import { measureText } from '../../src/lib/export/figureFont';
+import type { LegendStyle, PrintLegendEntry } from '../../src/lib/export/printFigure';
 
-const entry = (over: Partial<LegendEntry> = {}): LegendEntry => ({
-  setId: 0, ch: 0, label: 'set · ch_0', color: '#2563eb', state: 'on', ...over,
-});
+const frame = { x: 40, y: 5, w: 400, h: 200 };
+const canvas = { w: 460, h: 250 };
+const entry = (label: string, style: LegendStyle = 'line'): PrintLegendEntry => ({ label, color: '#2563eb', style, faded: false });
 
-describe('legendOverlaySvg (round-7d: legends in exported figures)', () => {
-  it('follows the figure.ts restyle contract: plot-bg card, axis labels, roleless swatches', () => {
-    const svg = legendOverlaySvg([entry()], { x: 0.02, y: 0.02 }, { w: 800, h: 400 });
-    expect(svg).toContain(`data-role="plot-bg"`);
-    expect(svg).toContain(`fill="${CHROME.bg}"`);
-    expect(svg).toContain(`stroke="${CHROME.frame}"`);
-    expect(svg).toContain(`data-role="axis"`);
-    expect(svg).toContain(`fill="${CHROME.axis}"`);
-    // The swatch keeps the DATA colour and carries no data-role.
-    expect(svg).toMatch(/<line [^>]*stroke="#2563eb"/);
-    expect(svg).not.toMatch(/<line [^>]*data-role/);
+describe('layoutPrintLegend', () => {
+  it('exports the 5.4 pt inset and sizes a one-entry card from the em sizes', () => {
+    expect(LEGEND_INSET_PT).toBe(5.4);
+    const l = layoutPrintLegend({ legend: { entries: [entry('a')], placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame, canvas, belowTopPt: 240, points: [] })!;
+    // padding 0.45 em each side, swatch 1.6 em, gap 0.5 em, the label; one 1.25 em row (9 pt type)
+    expect(l.box.w).toBeCloseTo(2 * 0.45 * 9 + 1.6 * 9 + 0.5 * 9 + measureText('a', 9), 6);
+    expect(l.box.h).toBeCloseTo(2 * 0.45 * 9 + 1.25 * 9, 6);
+    expect(l.extraHeightPt).toBe(0);
+    expect(l.texts).toEqual([expect.objectContaining({ text: 'a', role: 'legend' })]);
   });
-
-  it("excludes 'off' rows (they exist on screen only to be clicked back on)", () => {
-    const svg = legendOverlaySvg(
-      [entry({ label: 'shown' }), entry({ ch: 1, label: 'hidden', state: 'off' })],
-      { x: 0.02, y: 0.02 }, { w: 800, h: 400 },
-    );
-    expect(svg).toContain('shown');
-    expect(svg).not.toContain('hidden');
-    // All lines off → nothing at all.
-    expect(legendOverlaySvg([entry({ state: 'off' })], { x: 0, y: 0 }, { w: 800, h: 400 })).toBe('');
+  it('each corner preset sits inside the frame, at least 5.4 pt in', () => {
+    for (const [x, y] of [[0.98, 0.98], [0.98, 0.02], [0.02, 0.02], [0.02, 0.98]]) {
+      const l = layoutPrintLegend({ legend: { entries: [entry('noise 30s · ch_1/ch_0')], placement: { kind: 'position', x, y } }, frame, canvas, belowTopPt: 240, points: [] })!;
+      expect(l.box.x).toBeGreaterThanOrEqual(frame.x + 5.4 - 1e-9);
+      expect(l.box.y).toBeGreaterThanOrEqual(frame.y + 5.4 - 1e-9);
+      expect(l.box.x + l.box.w).toBeLessThanOrEqual(frame.x + frame.w - 5.4 + 1e-9);
+      expect(l.box.y + l.box.h).toBeLessThanOrEqual(frame.y + frame.h - 5.4 + 1e-9);
+      expect(l.box.below).toBe(false);
+    }
   });
-
-  it('fades faded rows and escapes XML in labels', () => {
-    const svg = legendOverlaySvg(
-      [entry({ state: 'fade', label: 'a<b & c>' })],
-      { x: 0.02, y: 0.02 }, { w: 800, h: 400 },
-    );
+  it('outside-right sits right of the frame and inside the canvas', () => {
+    const l = layoutPrintLegend({ legend: { entries: [entry('a')], placement: { kind: 'position', x: 1.02, y: 0.02 } }, frame, canvas, belowTopPt: 240, points: [] })!;
+    expect(l.box.x + l.box.w).toBeGreaterThan(frame.x + frame.w);
+    expect(l.box.x + l.box.w).toBeLessThanOrEqual(canvas.w);
+  });
+  it('swatches follow their style and faded rows fade', () => {
+    const svg = layoutPrintLegend({ legend: { entries: [entry('l'), entry('d', 'dash'), entry('x', 'x'), entry('o', 'o'), entry('xl', 'xline'), { ...entry('f'), faded: true }], placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame, canvas, belowTopPt: 240, points: [] })!.svg;
+    expect(svg).toMatch(/stroke-dasharray="9\.6 7\.2"/);
+    expect(svg).toMatch(/<circle/);
+    expect((svg.match(/<path/g) ?? []).length).toBe(2);   // the × of 'x' and of 'xline'
     expect(svg).toContain('opacity="0.55"');
-    expect(svg).toContain('a&lt;b &amp; c&gt;');
-    expect(svg).not.toContain('a<b');
   });
-
-  it('anchors right/bottom past 0.5 (SE default pins flush) and clamps into the canvas', () => {
-    const se = legendOverlaySvg([entry()], { x: 0.98, y: 0.98 }, { w: 800, h: 400 });
-    const [, tx, ty] = se.match(/translate\(([\d.]+) ([\d.]+)\)/)!.map(Number);
-    // The box's right/bottom edge sits near (but inside) the SE corner.
-    expect(tx).toBeGreaterThan(800 * 0.6);
-    expect(ty).toBeGreaterThan(400 * 0.6);
-    const [, w, h] = se.match(/width="([\d.]+)" height="([\d.]+)"/)!.map(Number);
-    expect(tx + w).toBeLessThanOrEqual(800);
-    expect(ty + h).toBeLessThanOrEqual(400);
-    // outside-right (x=1.02) clamps fully inside rather than clipping.
-    const outside = legendOverlaySvg([entry()], { x: 1.02, y: 0.02 }, { w: 800, h: 400 });
-    const [, ox] = outside.match(/translate\(([\d.]+) /)!.map(Number);
-    const [, ow] = outside.match(/width="([\d.]+)"/)!.map(Number);
-    expect(ox + ow).toBeLessThanOrEqual(800);
+  it('follows the restyle contract and escapes labels', () => {
+    const svg = layoutPrintLegend({ legend: { entries: [entry('a<b & c')], placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame, canvas, belowTopPt: 240, points: [] })!.svg;
+    expect(svg).toMatch(/<rect data-role="plot-bg"[^>]*fill="#ffffff"[^>]*stroke="#c5cad3"/);
+    expect(svg).toMatch(/<text data-role="axis"[^>]*font-size="36"[^>]*fill="#1d2027"/);
+    expect(svg).toContain('a&lt;b &amp; c');
   });
-
-  it('wraps into columns beyond 10 entries, like the on-screen card', () => {
-    const many = Array.from({ length: 12 }, (_, i) => entry({ ch: i, label: `line_${i}` }));
-    const svg = legendOverlaySvg(many, { x: 0.02, y: 0.02 }, { w: 800, h: 400 });
-    const [, , h] = svg.match(/width="([\d.]+)" height="([\d.]+)"/)!.map(Number);
-    // Two balanced columns: 6 rows tall, not 12.
-    expect(h).toBeLessThan(12 * 15);
-    expect(h).toBeGreaterThanOrEqual(6 * 15);
-    // Both columns' x offsets appear.
-    const xs = new Set([...svg.matchAll(/<line x1="([\d.]+)"/g)].map((m) => m[1]));
-    expect(xs.size).toBe(2);
+  it('a legend taller than the frame adds columns, then goes below the axes', () => {
+    const many = Array.from({ length: 40 }, (_, i) => entry(`set ${i} · ch_1/ch_0`));
+    const l = layoutPrintLegend({ legend: { entries: many, placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame: { ...frame, h: 80 }, canvas, belowTopPt: 240, points: [] })!;
+    expect(l.box.below).toBe(true); expect(l.box.y).toBeGreaterThanOrEqual(240);
+    expect(l.extraHeightPt).toBeGreaterThan(0); expect(l.svg).not.toContain('data-role="plot-bg"');
+  });
+  it("'best' takes the emptiest corner, ties going se, ne, nw, sw", () => {
+    const best = (points: [number, number][]) => layoutPrintLegend({ legend: { entries: [entry('a')], placement: { kind: 'best' } }, frame, canvas, belowTopPt: 240, points })!.box;
+    const se = best([]);                                              // no points: se
+    expect(se.x + se.w).toBeGreaterThan(frame.x + frame.w / 2); expect(se.y).toBeGreaterThan(frame.y + frame.h / 2);
+    // inside the se card (~31 x 16 pt for 'a', 5.4 pt in from the corner)
+    const crowdedSe = Array.from({ length: 50 }, (_, i) => [frame.x + frame.w - 10 - i * 0.5, frame.y + frame.h - 12] as [number, number]);
+    const ne = best(crowdedSe);
+    expect(ne.y).toBeLessThan(frame.y + frame.h / 2); expect(ne.x).toBeGreaterThan(frame.x + frame.w / 2);
+  });
+  it("'best' goes below when every corner covers data", () => {
+    const grid: [number, number][] = [];
+    for (let i = 0; i <= 100; i++) for (let j = 0; j <= 50; j++) grid.push([frame.x + i * 4, frame.y + j * 4]);
+    const l = layoutPrintLegend({ legend: { entries: [entry('a'), entry('b')], placement: { kind: 'best' } }, frame, canvas, belowTopPt: 240, points: grid })!;
+    expect(l.box.below).toBe(true);
+  });
+  it('a label wider than the canvas is shortened with an ellipsis, never drawn off it', () => {
+    const long = 'x'.repeat(400);
+    const l = layoutPrintLegend({ legend: { entries: [entry(long)], placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame, canvas, belowTopPt: 240, points: [] })!;
+    expect(l.box.x).toBeGreaterThanOrEqual(0); expect(l.box.x + l.box.w).toBeLessThanOrEqual(canvas.w);
+    expect(l.texts[0].text.endsWith('…')).toBe(true);
+  });
+  it('no entries, no legend', () => {
+    expect(layoutPrintLegend({ legend: { entries: [], placement: { kind: 'best' } }, frame, canvas, belowTopPt: 240, points: [] })).toBeNull();
   });
 });

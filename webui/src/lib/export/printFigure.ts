@@ -7,7 +7,9 @@
  * Pure (no DOM), so node tests can check the layout. The result is a
  * self-contained SVG string whose root `width`/`height` are in points and
  * whose viewBox is in quarter points (`UNITS_PER_PT` = 4 units per pt), plus
- * the box of every text it drew, so the layout claims are testable.
+ * the box of every text it drew, so the layout claims are testable. A legend,
+ * when given, is laid out by `legendOverlay.ts` in the first pane's frame or
+ * below the axes.
  *
  * The chrome follows `figure.ts`'s self-contained-SVG contract: the background
  * is `data-role="plot-bg"`, every gridline, frame and text is
@@ -19,6 +21,7 @@ import { buildPlot, type BuiltPlot, type PlotLine, type PlotModel } from '../plo
 import { PRINT_CHROME } from '../plot/chrome';
 import { fmtTick, scaleLinear, scaleLog } from '../plot/scales';
 import { FIGURE_FONT_STACK, FONT_ASCENT, FONT_DESCENT, measureText } from './figureFont';
+import { layoutPrintLegend } from './legendOverlay';
 
 /**
  * What a figure shows, which picks its aspect (`FIGURE_ASPECTS`): `'bode'`
@@ -96,9 +99,10 @@ export interface PrintText { text: string; role: 'tick' | 'label' | 'legend'; bo
 
 /**
  * A laid-out figure: the SVG, its size in points, whether it was laid out
- * taller than its kind's aspect to fit a label (`grown`), every text drawn,
- * the axes frame of each pane in points, and the legend's box (`below` when
- * it sits under the axes), or null with no legend.
+ * taller than its kind's aspect to fit a label or a legend below the axes
+ * (`grown`), every text drawn, the axes frame of each pane in points, and the
+ * legend's box in points (`below` when it sits under the axes), or null with
+ * no legend.
  */
 export interface PrintFigure {
   svg: string; widthPt: number; heightPt: number; grown: boolean;
@@ -114,7 +118,7 @@ export const BODE_SPLIT = [0.6, 0.4] as const;
 export const PANE_GAP_PT = 9;
 
 /** Gap from the canvas edge to the outermost text, pt. */
-const EDGE_PT = 3;
+export const EDGE_PT = 3;
 /** Gap between the frame and its tick numbers, pt (0.4 × the tick size). */
 const TICK_PAD_PT = 0.4 * PRINT_TYPE.tickPt;
 /** Gap between tick numbers and their axis label, pt (0.35 × the label size). */
@@ -126,34 +130,44 @@ const Y_TICK_BASELINE_EM = 0.33;
 /** Data line width per on-screen px, pt. */
 const LINE_PT_PER_PX = 2 / 3;
 /** Dash and gap of a dashed data line, pt (the screen's `4 3` px × 0.6). */
-const DASH_PT = [2.4, 1.8] as const;
+export const DASH_PT = [2.4, 1.8] as const;
 /** Frame and gridline stroke widths, pt. */
 const FRAME_PT = 0.6;
 const GRID_PT = 0.4;
-/** Marker half-size, pt; a × is stroked 0.7 pt, a ○ has radius 2.6 pt, stroked 0.9 pt. */
-const MARK_HALF_PT = 2.2;
-const CROSS_STROKE_PT = 0.7;
-const CIRCLE_R_PT = 2.6;
-const CIRCLE_STROKE_PT = 0.9;
+/** Marker half-size, pt: a × spans twice this each way. */
+export const MARK_HALF_PT = 2.2;
+/** Stroke width of a × marker, pt. */
+export const CROSS_STROKE_PT = 0.7;
+/** Radius of a ○ marker, pt. */
+export const CIRCLE_R_PT = 2.6;
+/** Stroke width of a ○ marker, pt. */
+export const CIRCLE_STROKE_PT = 0.9;
 /** Points per millimetre. */
 const PT_PER_MM = 72 / 25.4;
 
-/** A geometry value (position, size, path coordinate) in units: one decimal. */
-function geo(units: number): string {
+// The SVG writers below are shared with the legend (`legendOverlay.ts`), which
+// this module imports in turn. They are function declarations, so they exist
+// before either module has run its top level, whichever loads first.
+
+/** A geometry value (position, size, path coordinate) already in units: one decimal. */
+export function geo(units: number): string {
   const s = units.toFixed(1);
   return s === '-0.0' ? '0.0' : s;
 }
-/** A position or size in pt, written in units. */
-const u = (pt: number): string => geo(pt * UNITS_PER_PT);
-/** A style number in units (stroke width, radius, font size, dash): at most one decimal. */
-const sty = (pt: number): string => String(+(pt * UNITS_PER_PT).toFixed(1));
+/** A position or size given in pt, written in units (one decimal). */
+export function u(pt: number): string { return geo(pt * UNITS_PER_PT); }
+/**
+ * A style number given in pt (stroke width, radius, font size, dash), written
+ * in units with at most one decimal and no trailing `.0`.
+ */
+export function sty(pt: number): string { return String(+(pt * UNITS_PER_PT).toFixed(1)); }
 /** An opacity, to three decimals. */
-const opa = (v: number): string => String(+v.toFixed(3));
+export function opa(v: number): string { return String(+v.toFixed(3)); }
 
-/** Escape text content. */
-const escText = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-/** Escape an attribute value (double-quoted). */
-const escAttr = (s: string): string => escText(s).replace(/"/g, '&quot;');
+/** Escape SVG text content (`&`, `<`, `>`). */
+export function escText(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+/** Escape a double-quoted SVG attribute value. */
+export function escAttr(s: string): string { return escText(s).replace(/"/g, '&quot;'); }
 
 const FONT_ATTR = escAttr(FIGURE_FONT_STACK);
 
@@ -302,8 +316,12 @@ function frameIn(slot: PtBox, square: boolean | undefined): PtBox {
   return { x: slot.x + (slot.w - side) / 2, y: slot.y + (slot.h - side) / 2, w: side, h: side };
 }
 
-/** One pane drawn: its SVG and every text in it. */
-interface PaneOut { svg: string; texts: PrintText[] }
+/**
+ * One pane drawn: its SVG, every text in it, its plotted points in pt (the
+ * drawn data paths' vertices and the marker centres that fall in the frame),
+ * and `underPt`, the lowest edge of its frame or of any of its texts, pt.
+ */
+interface PaneOut { svg: string; texts: PrintText[]; points: Array<[number, number]>; underPt: number }
 
 /**
  * Draw one pane in its frame (pt): image or gridlines, the clipped data lines
@@ -342,14 +360,21 @@ function layoutPane(pane: PrintPane, k: number, frame: PtBox, widthPt: number, x
   const clip = `pf-clip-${k}`;
   parts.push(`<defs><clipPath id="${clip}"><rect x="0" y="0" width="${geo(wU)}" height="${geo(hU)}"/></clipPath></defs>`);
   parts.push(`<g transform="translate(${u(ox)} ${u(oy)})" clip-path="url(#${clip})">`);
+  // Plotted points (units in the data rect) for the legend's 'best' corner.
+  const plotted: Array<[number, number]> = [];
   built.paths.forEach((p, i) => {
     const line = model.lines[i];
     if (p.d && !line.markerOnly) {
       const dash = p.dashed ? ` stroke-dasharray="${sty(DASH_PT[0])} ${sty(DASH_PT[1])}"` : '';
       parts.push(`<path d="${p.d}" fill="none" stroke="${escAttr(p.color)}" `
         + `stroke-width="${sty(p.width * LINE_PT_PER_PX)}" opacity="${opa(p.opacity)}"${dash} stroke-linejoin="round"/>`);
+      for (const m of p.d.matchAll(PATH_VERTEX)) plotted.push([Number(m[1]), Number(m[2])]);
     }
-    if (line.marker) parts.push(markersSvg(line, model, built, wU, hU));
+    if (line.marker) {
+      const pts = markerPoints(line, model, built, wU, hU);
+      parts.push(markersSvg(line, pts));
+      plotted.push(...pts);
+    }
   });
   parts.push('</g>');
 
@@ -381,16 +406,23 @@ function layoutPane(pane: PrintPane, k: number, frame: PtBox, widthPt: number, x
   if (model.y2Label && built.y2Ticks.length > 0) {
     put(turnedText(model.y2Label, label, 90, widthPt - EDGE_PT - BASELINE_EM * label, oy + fh / 2));
   }
-  return { svg: parts.join(''), texts };
+  const points: Array<[number, number]> = [];
+  for (const [X, Y] of plotted) {
+    if (X >= 0 && X <= wU && Y >= 0 && Y <= hU) points.push([ox + X / UNITS_PER_PT, oy + Y / UNITS_PER_PT]);
+  }
+  const underPt = Math.max(oy + fh, ...texts.map((t) => t.box.y + t.box.h));
+  return { svg: parts.join(''), texts, points, underPt };
 }
 
+/** One `M`/`L` vertex of a built path: its x and y in units. */
+const PATH_VERTEX = /[ML](-?[\d.]+(?:e[+-]?\d+)?),(-?[\d.]+(?:e[+-]?\d+)?)/g;
+
 /**
- * A line's markers, in units relative to the data rect: its raw points mapped
- * through the built domains (log where the axis is log, never on a square
- * Nyquist model), skipping points outside them. A ○ per point, or one path of
- * ×s, in the line's colour and opacity.
+ * A line's marker centres, in units relative to the data rect: its raw points
+ * mapped through the built domains (log where the axis is log, never on a
+ * square Nyquist model), skipping points outside them.
  */
-function markersSvg(line: PlotLine, model: PlotModel, built: BuiltPlot, wU: number, hU: number): string {
+function markerPoints(line: PlotLine, model: PlotModel, built: BuiltPlot, wU: number, hU: number): Array<[number, number]> {
   const right = line.yAxis === 'right';
   const xd = built.xDomain;
   const yd: readonly [number, number] = right ? model.y2Range ?? [0, 1] : built.yDomain;
@@ -408,6 +440,14 @@ function markersSvg(line: PlotLine, model: PlotModel, built: BuiltPlot, wU: numb
     const X = sx(xv), Y = sy(yv);
     if (Number.isFinite(X) && Number.isFinite(Y)) pts.push([X, Y]);
   }
+  return pts;
+}
+
+/**
+ * A line's markers at `pts` (units relative to the data rect): a ○ per point,
+ * or one path of ×s, in the line's colour and opacity; '' with no points.
+ */
+function markersSvg(line: PlotLine, pts: ReadonlyArray<readonly [number, number]>): string {
   if (pts.length === 0) return '';
   const stroke = escAttr(line.color), op = opa(line.opacity);
   if (line.marker === 'o') {
@@ -447,7 +487,14 @@ function markersSvg(line: PlotLine, model: PlotModel, built: BuiltPlot, wU: numb
  * rule is per pane (label need ÷ share); only the last pane prints x numbers
  * and the x label, the others keep their gridlines. Data lines are stroked
  * with round joins.
- * The legend is not drawn yet: `legendBox` is always null.
+ *
+ * A `legend` is laid out by `layoutPrintLegend` (`legendOverlay.ts`) in the
+ * first pane's frame (Bode: the magnitude pane), at its placement, `'best'`
+ * counting that pane's drawn path vertices and marker centres inside the
+ * frame. One that cannot sit in the frame goes below the last pane's x label
+ * and grows the height by what it needs (`grown` true). Its labels join
+ * `texts` with `role: 'legend'`, its box is `legendBox`, and it is drawn last,
+ * over the panes.
  */
 export function printFigureSvg(input: PrintFigureInput): PrintFigure {
   const want = input.kind === 'bode' ? 2 : 1;
@@ -465,9 +512,9 @@ export function printFigureSvg(input: PrintFigureInput): PrintFigure {
   const gaps = PANE_GAP_PT * (shares.length - 1);
   let dataH = H0 - m.top - m.bottom - gaps;
   const need = Math.max(...measured.map((p, i) => labelNeed(p) / shares[i]));
-  const grown = need > dataH;
+  let grown = need > dataH;
   if (grown) dataH = need;
-  const H = dataH + gaps + m.top + m.bottom;
+  let H = dataH + gaps + m.top + m.bottom;
 
   const frames: PtBox[] = [];
   const outs: PaneOut[] = [];
@@ -480,10 +527,25 @@ export function printFigureSvg(input: PrintFigureInput): PrintFigure {
     y += slot.h + PANE_GAP_PT;
   });
 
+  // The legend goes in the first pane's frame, or below the last pane's x
+  // label, which grows the figure.
+  const texts = outs.flatMap((o) => o.texts);
+  const legend = input.legend
+    ? layoutPrintLegend({
+      legend: input.legend, frame: frames[0], canvas: { w: W, h: H },
+      belowTopPt: outs[outs.length - 1].underPt, points: outs[0].points,
+    })
+    : null;
+  if (legend) {
+    if (legend.extraHeightPt > 0) { H += legend.extraHeightPt; grown = true; }
+    texts.push(...legend.texts);
+  }
+
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" `
     + `width="${W.toFixed(2)}pt" height="${H.toFixed(2)}pt" viewBox="0 0 ${u(W)} ${u(H)}">`
     + `<rect data-role="plot-bg" x="0" y="0" width="${u(W)}" height="${u(H)}" fill="${PRINT_CHROME.bg}"/>`
     + outs.map((o) => o.svg).join('')
+    + (legend?.svg ?? '')
     + '</svg>';
-  return { svg, widthPt: W, heightPt: H, grown, texts: outs.flatMap((o) => o.texts), frames, legendBox: null };
+  return { svg, widthPt: W, heightPt: H, grown, texts, frames, legendBox: legend?.box ?? null };
 }
