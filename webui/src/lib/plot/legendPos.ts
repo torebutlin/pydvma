@@ -15,12 +15,17 @@
 
 /**
  * Where the axes frame sits inside its plot host: px from each edge of the
- * host (PlotSurface's own box) to the matching edge of the data rect, so
+ * host to the matching edge of the data rect's visible part, so
  * `left`/`top` are the frame's origin and `right`/`bottom` the margins
- * beyond it. PlotSurface publishes it through its bindable `frame` prop
- * (margins L58/T16/B42, R18 or 56 with a right axis; Nyquist's centred
- * square adds its centring offsets). `Legend.svelte` lays its card out in
- * a box at these insets, so its fractions and presets refer to the frame.
+ * beyond it. The host is the element PlotSurface fills and Legend is
+ * mounted in: PlotSurface measures the insets against its parent element
+ * (shrinking right/bottom where it overflows a host smaller than its
+ * min-size, as it is clipped there), and Legend applies them to its frame
+ * box's offsetParent, the same element. PlotSurface publishes them through
+ * its bindable `frame` prop (margins L58/T16/B42, R18 or 56 with a right
+ * axis; Nyquist's centred square adds its centring offsets). `Legend.svelte`
+ * lays its card out in a box at these insets, so its fractions and presets
+ * refer to the frame.
  */
 export interface FrameInsets { left: number; top: number; right: number; bottom: number }
 

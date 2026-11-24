@@ -475,6 +475,34 @@ test.describe('plot legend gestures', () => {
     expectInside(g);
     expect(g.scrolls).toBe(true);
 
+    // The plot area is shorter than PlotSurface's 220 px min-height, so the
+    // SVG overflows and its bottom (x ticks, the frame's lower part) is
+    // clipped. The legend's frame box is the VISIBLE part of the data frame:
+    // it ends at the plot area's bottom, not 42 px above it (which would
+    // cap the card at ~2 rows), and the capped card fills it less 2 × 8 px.
+    const vis = await page.evaluate(() => {
+      const box = document.querySelector('[data-testid="legend-frame"]') as HTMLElement;
+      const area = (box.offsetParent as HTMLElement).getBoundingClientRect();
+      const fr = document.querySelector('[data-testid="plot-svg"] rect.frame')!.getBoundingClientRect();
+      const b = box.getBoundingClientRect();
+      const card = document.querySelector('[data-testid="legend"]')!.getBoundingClientRect();
+      return {
+        visible: { top: Math.max(fr.top, area.top), bottom: Math.min(fr.bottom, area.bottom),
+          left: Math.max(fr.left, area.left), right: Math.min(fr.right, area.right) },
+        drawnBottom: fr.bottom, areaBottom: area.bottom,
+        box: { top: b.top, bottom: b.bottom, left: b.left, right: b.right },
+        card: { top: card.top, bottom: card.bottom, height: card.height },
+      };
+    });
+    expect(vis.drawnBottom).toBeGreaterThan(vis.areaBottom);   // the case: the frame is clipped
+    for (const k of ['top', 'bottom', 'left', 'right'] as const) {
+      expect(Math.abs(vis.box[k] - vis.visible[k])).toBeLessThan(1);
+    }
+    const visH = vis.visible.bottom - vis.visible.top;
+    expect(vis.card.height).toBeGreaterThan(visH - 2 * 8 - 1);  // capped by the visible frame, not less
+    expect(vis.card.top).toBeGreaterThanOrEqual(vis.visible.top + 7);
+    expect(vis.card.bottom).toBeLessThanOrEqual(vis.visible.bottom - 7);
+
     // The last row is reachable by scrolling the list, and still cycles.
     const last = page.getByTestId('legend-entry').last();
     await last.scrollIntoViewIfNeeded();

@@ -139,13 +139,18 @@
      */
     priorRangeOverride?: { x: [number, number] | null; y: [number, number] | null };
     /**
-     * OUTPUT (bind it): where the data frame sits inside this surface, px
-     * from each of the surface's edges to the matching edge of the frame
-     * rect (`ox`, `oy`, `width − ox − pw`, `height − oy − ph`: margins
-     * L58/T16/B42, R18 or 56, plus Nyquist's centring offsets). App passes
-     * it to `Legend`, which lays its card out against the frame. Undefined
-     * until the surface has measured itself; a value passed in (a stale one
-     * from another view's surface) is replaced as soon as this one mounts.
+     * OUTPUT (bind it): where the VISIBLE part of the data frame sits in the
+     * plot host, px from each edge of this surface's parent element (the
+     * host it fills, at its top-left) to the matching edge of the frame
+     * rect: `ox`, `oy`, `width − ox − pw`, `height − oy − ph` (margins
+     * L58/T16/B42, R18 or 56, plus Nyquist's centring offsets), the right
+     * and bottom less however far the surface overflows a host smaller than
+     * its min-width/min-height (clipped there), never below 0. App passes it
+     * to the `Legend` mounted beside this surface in the same host, which
+     * applies the insets to that host (its frame box's offsetParent) and
+     * lays its card out against the frame. Undefined until the surface has
+     * measured itself; a value passed in (a stale one from another view's
+     * surface) is replaced as soon as this one mounts.
      */
     frame?: FrameInsets;
   } = $props();
@@ -190,16 +195,32 @@
     return svgEl;
   }
 
+  /** The parent element's content size (the plot host this surface fills),
+   *  for the `frame` output: when the host is smaller than the surface's
+   *  min-width/min-height, the surface overflows it and is clipped there. */
+  let parentW = $state(0);
+  let parentH = $state(0);
+
   $effect(() => {
     if (!host) return;
+    const parent = host.parentElement;
     const ro = new ResizeObserver((entries) => {
-      const r = entries[entries.length - 1].contentRect;
-      // Round to whole px: sub-pixel resize deltas would otherwise
-      // churn a full plot rebuild for invisible size changes.
-      width = Math.round(r.width);
-      height = Math.round(r.height);
+      for (const e of entries) {
+        const r = e.contentRect;
+        // Round to whole px: sub-pixel resize deltas would otherwise
+        // churn a full plot rebuild for invisible size changes (and the
+        // same rounding on both keeps an unclipped surface at 0 overflow).
+        if (e.target === host) {
+          width = Math.round(r.width);
+          height = Math.round(r.height);
+        } else {
+          parentW = Math.round(r.width);
+          parentH = Math.round(r.height);
+        }
+      }
     });
     ro.observe(host);
+    if (parent) ro.observe(parent);
     return () => ro.disconnect();
   });
 
@@ -217,12 +238,20 @@
   const ox = $derived(ML + (model.squareAspect ? (iw - side) / 2 : 0));
   const oy = $derived(MT + (model.squareAspect ? (ih - side) / 2 : 0));
 
-  // Publish the frame's insets (the `frame` prop) whenever the layout moves.
-  // Only a real change is written, so a parent binding does not re-render on
-  // every effect run.
+  // Publish the frame's insets (the `frame` prop) whenever the layout moves:
+  // the VISIBLE part of the data frame, from the parent's edges. A surface
+  // held at its min-height (min-width) in a shorter (narrower) parent
+  // overflows it and is clipped there (the 4C6 short TF plot: a ~120 px
+  // plot area under the navigator, the surface 220 px), so the bottom
+  // (right) inset shrinks by that overflow, never below 0. Only a real
+  // change is written, so a parent binding does not re-render on every run.
   $effect(() => {
+    const overW = parentW > 0 ? Math.max(0, width - parentW) : 0;
+    const overH = parentH > 0 ? Math.max(0, height - parentH) : 0;
     const next: FrameInsets | undefined = width > 0 && height > 0
-      ? { left: ox, top: oy, right: width - ox - pw, bottom: height - oy - ph }
+      ? { left: ox, top: oy,
+          right: Math.max(0, width - ox - pw - overW),
+          bottom: Math.max(0, height - oy - ph - overH) }
       : undefined;
     const prev = untrack(() => frame);
     const same = next && prev

@@ -15,9 +15,11 @@
    * this surface, and the stores' identities are stable for the
    * component's lifetime (created once at app startup).
    *
-   * Placement is FRACTIONAL (`legend.x` / `legend.y` in `[0, 1]`, spec
-   * convention, see `lib/plot/legendPos`) ACROSS THE AXES FRAME, as in the
-   * printed figure: the card sits in a box laid at PlotSurface's `frame`
+   * Placement is FRACTIONAL (`legend.x` / `legend.y`, spec convention, see
+   * `lib/plot/legendPos`) ACROSS THE AXES FRAME, as in the printed figure:
+   * nominally in `[0, 1]`, but the `outside-right` preset stores
+   * `x = 1.02` and a drag over the plot's margins stores values a little
+   * below 0 or past 1. The card sits in a box laid at PlotSurface's `frame`
    * insets (`legend-frame`, pointer-events none so the plot underneath
    * still takes gestures), which is the card's offsetParent, so every
    * fraction, measure and drag below resolves against the frame. The card
@@ -51,9 +53,10 @@
    * the store update flows back through `legendRows` and re-renders in
    * place.
    *
-   * Free drag: pointer-drag the card → `clampLegend(newFractionalPos)`
-   * → `setLegend(active, { …legend, x, y, preset: null })`. Dragging
-   * ALWAYS clears the preset and NEVER snaps (spec §6). Moves update
+   * Free drag: pointer-drag the card → `clampLegend(newFractionalPos, the
+   * host's bounds as frame fractions)` → `setLegend(active, { …legend, x, y,
+   * preset: null })`. Dragging ALWAYS clears the preset and NEVER snaps
+   * (spec §6). Moves update
    * live (legend position is not history-tracked) but are rAF-coalesced
    * for smoothness. On pointerup the card commits WHERE IT SITS, as the
    * fraction of its nearer edges (`settledPos`), so the anchor flip below
@@ -106,9 +109,11 @@
     entriesOverride?: Readable<LegendEntry[]> | undefined;
     /**
      * Where the axes frame sits in the plot host (PlotSurface's bound
-     * `frame`, px from the host's edges). The card is laid out in a box at
-     * these insets, so its fractions and presets refer to the frame.
-     * Omitted → all zero: the box is the whole host.
+     * `frame`, px from the host's edges). PlotSurface measures it against
+     * its parent element, and this legend is mounted in that same element,
+     * which is the frame box's offsetParent: the box is laid at these
+     * insets there, so the card's fractions and presets refer to the
+     * frame's visible part. Omitted → all zero: the box is the whole host.
      */
     frame?: FrameInsets;
   } = $props();
