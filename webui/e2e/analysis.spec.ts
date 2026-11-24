@@ -572,7 +572,11 @@ test.describe('@engine', () => {
     // fallback — e2e has no working folder).
     const dlPng = page.waitForEvent('download');
     await page.getByTestId('damping-save-edc').click();
-    expect((await dlPng).suggestedFilename()).toMatch(/^damping-edc_.+\.png$/);
+    const png = await dlPng;
+    expect(png.suggestedFilename()).toMatch(/^damping-edc_.+\.png$/);
+    const pngPath = await png.path();
+    const head = readFileSync(pngPath!).subarray(0, 24);
+    expect(head.readUInt32BE(16)).toBe(3780);   // IHDR width: 160 mm at 600 dpi
     const dlCsv = page.waitForEvent('download');
     await page.getByTestId('damping-save-bands-csv').click();
     expect((await dlCsv).suggestedFilename()).toMatch(/^damping-bands_.+\.csv$/);

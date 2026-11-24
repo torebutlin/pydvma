@@ -163,7 +163,7 @@
    */
   const saveDampingFile = (name: string, bytes: Uint8Array): Promise<string | null> =>
     (workdir ?? fallbackDir()).save(name, bytes);
-  const notifyDamping = (message: string, level: 'success' | 'error'): void => {
+  const notifyDamping = (message: string, level: 'success' | 'error' | 'info'): void => {
     toasts.push(message, { level });
   };
   // Acquisition store (Plan 2): manages Web Audio device enumeration +

@@ -23,13 +23,13 @@
    *   and the metrics table (EDT / T20 / T30 / T60 / Qn; NaN renders as an
    *   em-dash — insufficient decay range, not an error).
    *
-   * Every chart is SAVEABLE as its own figure (round-7c): the SVGs follow
-   * PlotSurface's self-contained-SVG contract (decision A) — a
-   * `data-role="plot-bg"` rect and `data-role="axis"` chrome with inline
-   * CHROME hexes (scoped CSS still wins on screen), `tick`-classed tick
-   * text — so `figure.ts`'s exportPng restyles them exactly like the main
-   * plot. The band table saves as CSV. Delivery goes through the same
-   * workdir-or-download path as Save Figure (the `onsavefile` prop).
+   * Every chart is SAVEABLE as its own PRINT figure: the save button lays the
+   * chart out with `dampingFigure.ts` (the same renderer as Save Figure:
+   * 160 mm default, 600 dpi PNG and/or embedded-font PDF per the Export
+   * stage's `figureOptions`) with a legend inside the axes, writing one file
+   * per ticked format. The on-screen SVG is not exported. The band table
+   * saves as CSV. Delivery goes through the same workdir-or-download path as
+   * Save Figure (the `onsavefile` prop).
    *
    * The panel never talks to the engine: control commits update the damping
    * store then call `onrefit`, and the actions layer pushes decoded results
@@ -42,7 +42,14 @@
   import { LINE_PALETTE } from '../lib/stores/selection';
   import { niceTicks, fmtTick } from '../lib/plot/scales';
   import { CHROME } from '../lib/plot/chrome';
-  import { exportPng } from '../lib/export/figure';
+  import { figureBytes } from '../lib/export/figure';
+  import { figureFormats, figureNotes, figureOptions, clampFigureWidth } from '../lib/export/figureSave';
+  import { printFigureSvg } from '../lib/export/printFigure';
+  import {
+    dampingDecayFigure, dampingEdcFigure, dampingSpectrumFigure, decayDomain, edcDomain,
+    fmtThreshold, normaliseSlice, spectrumDomain,
+  } from '../lib/export/dampingFigure';
+  import { get } from 'svelte/store';
   import {
     seriesExtent, padDomain, polylinePoints, pxX, pxY, markerIndices,
     type MiniDomain,
@@ -69,7 +76,7 @@
     /** Resolves where the file went, or null when the user cancelled the save. */
     onsavefile: (name: string, bytes: Uint8Array) => Promise<string | null | void>;
     /** Toast feedback for saves. */
-    notify: (message: string, level: 'success' | 'error') => void;
+    notify: (message: string, level: 'success' | 'error' | 'info') => void;
   } = $props();
 
   // NB not named `state`: a local called `state` shadows the rune name, so
@@ -99,27 +106,14 @@
 
   // ---- peaks mode: spectrum (normalised) + threshold ----
   /** Slice magnitude normalised min→max — the scale the threshold lives on. */
-  const specNorm = $derived.by(() => {
-    const p = dmp.peaks;
-    if (!p || p.sliceMag.length === 0) return null;
-    const [lo, hi] = seriesExtent([p.sliceMag]);
-    const span = hi - lo || 1;
-    const norm = new Float64Array(p.sliceMag.length);
-    for (let i = 0; i < norm.length; i++) norm[i] = (p.sliceMag[i] - lo) / span;
-    return { freq: p.sliceFreq, norm, lo, span };
-  });
-  const specDom = $derived<MiniDomain | null>(specNorm && {
-    x: padDomain(seriesExtent([specNorm.freq]), 0.02),
-    y: [0, 1.06],
-  });
+  const specNorm = $derived(dmp.peaks ? normaliseSlice(dmp.peaks) : null);
+  const specDom = $derived<MiniDomain | null>(specNorm && spectrumDomain(specNorm));
 
   // Threshold drag: live-preview the line locally; commit (store + refit) on
   // release. The hit target is a fat invisible band around the 1px line.
   let dragThr = $state<number | null>(null);
   const shownThr = $derived(dragThr ?? dmp.threshold);
   let specSvg: SVGSVGElement | undefined = $state();
-  let decaySvg: SVGSVGElement | undefined = $state();
-  let edcSvg: SVGSVGElement | undefined = $state();
   function thrFromEvent(e: PointerEvent): number {
     const r = specSvg!.getBoundingClientRect();
     const frac = 1 - ((e.clientY - r.top) / r.height) * (specH / ih(specH)) + MT / ih(specH);
@@ -141,30 +135,11 @@
     onrefit();
   }
 
-  /**
-   * Threshold display: 3 SIGNIFICANT figures, not fixed decimals — the
-   * automatic choice can be tiny (e.g. 4e-4 on a peaky spectrum) and a
-   * 3-decimal rounding would show it as a misleading "0".
-   */
-  const fmtThr = (v: number) => String(Number(v.toPrecision(3)));
-
   // ---- peaks mode: decay-fit chart ----
-  const decayDom = $derived<MiniDomain | null>(dmp.peaks && dmp.peaks.fits.length > 0
-    ? {
-        x: padDomain(seriesExtent(dmp.peaks.fits.map((f) => f.tFit)), 0.03),
-        y: padDomain(seriesExtent(dmp.peaks.fits.flatMap((f) => [f.realData, f.realFit])), 0.08),
-      }
-    : null);
+  const decayDom = $derived<MiniDomain | null>(dmp.peaks ? decayDomain(dmp.peaks) : null);
 
   // ---- bands mode: EDC chart ----
-  const edcDom = $derived<MiniDomain | null>(dmp.bands && dmp.bands.bandData.length > 0
-    ? {
-        x: padDomain(seriesExtent(dmp.bands.bandData.map((b) => b.edcT)), 0.02),
-        // Show the useful top of the decay; the Schroeder tail dives to the
-        // -300 dB floor, which would crush every fit window into the frame top.
-        y: [-70, 3],
-      }
-    : null);
+  const edcDom = $derived<MiniDomain | null>(dmp.bands ? edcDomain(dmp.bands) : null);
 
   const colour = (i: number) => LINE_PALETTE[i % LINE_PALETTE.length];
   const fmt1 = (v: number) => (Number.isFinite(v) ? v.toFixed(1) : '—');
@@ -193,16 +168,35 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
   };
   let saving = $state(false);
-  async function saveChart(id: DampingChart, svg: SVGSVGElement | undefined) {
-    if (!svg || saving) return;
+  async function saveChart(id: DampingChart) {
+    if (saving) return;
+    const opts = get(figureOptions);
+    const formats = figureFormats(opts);
+    if (formats.length === 0) {
+      notify('Pick at least one figure format (PNG or PDF) in the Export stage.', 'info');
+      return;
+    }
     saving = true;
     try {
-      // 'white' background — the same theme-invariant default the main Save
-      // Figure opens with; the charts' CHROME-hex chrome restyles identically.
-      const blob = await exportPng(svg.outerHTML, 'white');
-      const name = `damping-${id}_${stamp()}.png`;
-      const where = await onsavefile(name, new Uint8Array(await blob.arrayBuffer()));
-      if (where !== null) notify(`Saved ${where ?? name}`, 'success');
+      const width = clampFigureWidth(opts.widthMm);
+      const input = id === 'spectrum' ? (dmp.peaks && dampingSpectrumFigure(dmp.peaks, width))
+        : id === 'decay' ? (dmp.peaks && dampingDecayFigure(dmp.peaks, width))
+        : (dmp.bands && dampingEdcFigure(dmp.bands, width));
+      if (!input) return;
+      const fig = printFigureSvg(input);
+      const stampNow = stamp();
+      const saved: string[] = [];
+      for (const format of formats) {
+        const name = `damping-${id}_${stampNow}.${format}`;
+        const where = await onsavefile(name, await figureBytes(fig, format, opts.bg));
+        if (where === null) break;   // the user cancelled the save: skip the rest
+        saved.push(where ?? name);
+      }
+      if (saved.length) {
+        const notes = figureNotes(fig, formats);
+        notify(`Saved ${saved.join(' and ')}${notes.grown ? `, ${notes.grown}` : ''}`, 'success');
+        if (notes.glyphs) notify(notes.glyphs, 'info');
+      }
     } catch (e) {
       notify(`Chart save failed: ${e instanceof Error ? e.message : e}`, 'error');
     } finally {
@@ -256,12 +250,12 @@
     fill={CHROME.axis} transform="rotate(-90 11 {MT + ih(h) / 2})">{ylab}</text>
 {/snippet}
 
-{#snippet cardHead(title: string, chart: DampingChart, svg: SVGSVGElement | undefined)}
+{#snippet cardHead(title: string, chart: DampingChart)}
   <div class="dpc-head">
     <span class="dpc-title">{title}</span>
-    <button class="dpc-btn" data-testid="damping-save-{chart}" title="Save this chart as PNG"
-      aria-label="Save {title} as PNG" disabled={saving}
-      onclick={() => saveChart(chart, svg)}>
+    <button class="dpc-btn" data-testid="damping-save-{chart}" title="Save this chart as a figure"
+      aria-label="Save {title} as a figure" disabled={saving}
+      onclick={() => saveChart(chart)}>
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor"
         stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M8 2v8M4.8 7l3.2 3.2L11.2 7M2.8 13h10.4" />
@@ -309,7 +303,7 @@
       <label class="dp-field">
         <span>threshold</span>
         <input data-testid="damping-threshold-input" inputmode="decimal" placeholder="auto"
-          value={shownThr === null ? '' : fmtThr(shownThr)}
+          value={shownThr === null ? '' : fmtThreshold(shownThr)}
           onchange={commitThreshold} disabled={dmp.busy} />
       </label>
     {:else}
@@ -347,7 +341,7 @@
     <div class="dp-charts">
       <div class="dp-card" class:expanded={expanded === 'spectrum'}
         class:tucked={expanded !== null && expanded !== 'spectrum'}>
-        {@render cardHead('Start-slice spectrum', 'spectrum', specSvg)}
+        {@render cardHead('Start-slice spectrum', 'spectrum')}
         <div class="dp-chart" bind:clientWidth={specW} bind:clientHeight={specH}>
           {#if specNorm && specDom}
             <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -390,12 +384,12 @@
       </div>
       <div class="dp-card" class:expanded={expanded === 'decay'}
         class:tucked={expanded !== null && expanded !== 'decay'}>
-        {@render cardHead('Decay fits — Re log(S)', 'decay', decaySvg)}
+        {@render cardHead('Decay fits — Re log(S)', 'decay')}
         <div class="dp-chart" bind:clientWidth={decayW} bind:clientHeight={decayH}>
           {#if dmp.peaks && decayDom}
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-            <svg xmlns="http://www.w3.org/2000/svg" bind:this={decaySvg} data-testid="damping-decay" viewBox="0 0 {decayW} {decayH}"
+            <svg xmlns="http://www.w3.org/2000/svg" data-testid="damping-decay" viewBox="0 0 {decayW} {decayH}"
               role="img" aria-label="Per-mode decay fits"
               onclick={() => toggleExpand('decay')}>
               {@render frame(decayW, decayH, decayDom, 'Time (s)', 'Re log(S)')}
@@ -434,12 +428,12 @@
     <div class="dp-charts">
       <div class="dp-card" class:expanded={expanded === 'edc'}
         class:tucked={expanded !== null && expanded !== 'edc'}>
-        {@render cardHead('Schroeder decay — EDC', 'edc', edcSvg)}
+        {@render cardHead('Schroeder decay — EDC', 'edc')}
         <div class="dp-chart" bind:clientWidth={edcW} bind:clientHeight={edcH}>
           {#if dmp.bands && edcDom}
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-            <svg xmlns="http://www.w3.org/2000/svg" bind:this={edcSvg} data-testid="damping-edc" viewBox="0 0 {edcW} {edcH}" role="img"
+            <svg xmlns="http://www.w3.org/2000/svg" data-testid="damping-edc" viewBox="0 0 {edcW} {edcH}" role="img"
               aria-label="Band energy-decay curves"
               onclick={() => toggleExpand('edc')}>
               {@render frame(edcW, edcH, edcDom, 'Time (s)', 'EDC (dB)')}
