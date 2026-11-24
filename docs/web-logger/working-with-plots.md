@@ -31,7 +31,8 @@ tray as a drawer; close it with its **×**, **Esc**, or a click outside.
   session is restored or the file loaded, and is what `session.data`
   shows in a notebook.
 - Expand a set to switch individual channels on, faded or off. Double-click
-  a channel name to rename it.
+  a channel's row (away from its name) to show or hide it outright.
+  Double-click a channel name to rename it.
 - The channel numbers across the top cycle that channel through on,
   faded and off in **all** sets at once.
 - **cal** (shown on hover) opens the [calibration dialog](calibration.md).
@@ -45,8 +46,11 @@ tray as a drawer; close it with its **×**, **Esc**, or a click outside.
 ## The legend
 
 A **legend** floats over the plot with one row per line. Click a row to
-cycle that line **on**, **faded**, **off**, as in the tray. Lines that
-are off stay listed, struck through, so you can bring them back.
+cycle that line **on**, **faded**, **off**, as in the tray. Double-click
+a row to show or hide the line outright, without the faded step: a quick
+way to flash one line on and off to compare it with the others. A faded
+line counts as shown, so a double-click hides it. Lines that are off stay
+listed, struck through, so you can bring them back.
 
 Choose a corner in [the toolbar's panel](#the-zoom-toolbar), or drag
 the legend anywhere. A corner places it inside the axes, 8 px clear of

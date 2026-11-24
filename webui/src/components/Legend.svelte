@@ -9,7 +9,7 @@
    * rather than narrow callbacks. It reads `selection.legendRows` (a
    * derived store that lists EVERY line, off ones included, each tagged
    * with its tri-state), mirrors the data-tray's tri-state by calling
-   * `selection.cycleLine`, and persists placement via
+   * `selection.clickLine` / `dblclickLine`, and persists placement via
    * `viewState.setLegend(active, …)` while reading the current legend
    * slice from `viewState.current`. Callbacks would just re-implement
    * this surface, and the stores' identities are stable for the
@@ -50,8 +50,10 @@
    *   `legend.compact` in the viewState legend slice.
    *
    * Clicking a row OR a dot cycles that line (on → fade → off → on);
-   * the store update flows back through `legendRows` and re-renders in
-   * place.
+   * double-clicking shows or hides it outright, judged from its state
+   * before the first click (`selection.clickLine` / `dblclickLine`), so
+   * lines can be flashed on and off without passing through fade. The
+   * store update flows back through `legendRows` and re-renders in place.
    *
    * Free drag: pointer-drag the card → `clampLegend(newFractionalPos, the
    * host's bounds as frame fractions)` → `setLegend(active, { …legend, x, y,
@@ -495,7 +497,8 @@
               data-testid="legend-dot"
               title={c.label}
               aria-label={c.label}
-              onclick={() => { if (!justDragged) selection.cycleLine(c.setId, c.ch); }}
+              onclick={(ev) => { if (!justDragged) selection.clickLine(c.setId, c.ch, ev.detail); }}
+              ondblclick={() => { if (!justDragged) selection.dblclickLine(c.setId, c.ch); }}
             >
               <span
                 class="dot-fill"
@@ -521,8 +524,9 @@
               class:fade={e.state === 'fade'}
               class:off={e.state === 'off'}
               data-testid="legend-entry"
-              title="Click to cycle: on → fade → off → on"
-              onclick={() => { if (!justDragged) selection.cycleLine(e.setId, e.ch); }}
+              title="Click: on → fade → off. Double-click: show / hide"
+              onclick={(ev) => { if (!justDragged) selection.clickLine(e.setId, e.ch, ev.detail); }}
+              ondblclick={() => { if (!justDragged) selection.dblclickLine(e.setId, e.ch); }}
             >
               <span class="swatch" style:background={e.color}></span>
               <span class="label">{e.label}</span>

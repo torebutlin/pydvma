@@ -68,6 +68,14 @@ follows [semantic versioning](https://semver.org/).
   with their legends, and the energy-decay chart marks each band's cut,
   as on screen.
 
+### Added
+
+- **Double-click a line to show or hide it outright.** In the legend, and
+  on a channel's row in the tray, a single click still cycles on, faded,
+  off; a double-click now goes straight between shown and hidden, so one
+  line can be flashed on and off to compare it with the others (lab
+  feedback). A faded line counts as shown.
+
 ### Fixed
 
 - The legend's corner presets (SE by default) sit inside the axes, 8 px

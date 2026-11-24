@@ -17,6 +17,28 @@ test('lines default on; individual cycle on->fade->off->on', () => {
   sel.cycleLine(0, 1); expect(get(sel.state)(0, 1)).toBe('on');
 });
 
+test('clickLine cycles on a single click or a key, and skips the second click of a double-click', () => {
+  sel.clickLine(0, 1, 1); expect(get(sel.state)(0, 1)).toBe('fade');
+  sel.clickLine(0, 1, 2); expect(get(sel.state)(0, 1)).toBe('fade');   // 2nd click: left to the dblclick
+  sel.clickLine(0, 1, 0); expect(get(sel.state)(0, 1)).toBe('off');    // keyboard activation cycles
+});
+
+test('a double-click shows or hides outright, judged from the state before its first click', () => {
+  const dbl = (c: number) => { sel.clickLine(0, c, 1); sel.clickLine(0, c, 2); sel.dblclickLine(0, c); };
+  dbl(1); expect(get(sel.state)(0, 1)).toBe('off');                    // shown -> hidden
+  dbl(1); expect(get(sel.state)(0, 1)).toBe('on');                     // hidden -> shown
+  sel.cycleLine(0, 0); expect(get(sel.state)(0, 0)).toBe('fade');
+  dbl(0); expect(get(sel.state)(0, 0)).toBe('off');                    // faint counts as shown
+  expect(get(sel.state)(0, 1)).toBe('on');                             // other lines untouched
+});
+
+test('a double-click with no remembered first click judges from the current state', () => {
+  sel.clickLine(1, 0, 1);                                              // remembered for (1, 0)
+  sel.dblclickLine(0, 1); expect(get(sel.state)(0, 1)).toBe('off');    // different line: current 'on' -> off
+  sel.dblclickLine(0, 1); expect(get(sel.state)(0, 1)).toBe('on');     // memory consumed: current 'off' -> on
+  sel.dblclickLine(99, 0);                                             // unknown id: no-op, no throw
+});
+
 test('set cycle drives every channel in the set together', () => {
   sel.cycleSet(2);
   for (let ch = 0; ch < 8; ch++) expect(get(sel.state)(2, ch)).toBe('fade');

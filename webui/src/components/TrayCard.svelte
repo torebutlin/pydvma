@@ -23,11 +23,13 @@
    * (`set.allOff`); uniformly 'fade' dims just the title (`set.allFade`).
    *
    * When expanded, one row per channel: a colour chip (click →
-   * `cycleLine`, dimmed to 40% when faded), a channel label (custom via
+   * `clickLine`, dimmed to 40% when faded), a channel label (custom via
    * `selection.channelLabel`, default `ch_{c}`; double-click → inline
    * rename committed on Enter/blur, cancelled on Esc — mirrors the
    * set-name rename), a sparkline and a state badge. The row is a
-   * `<button>` that cycles the tri-state on click; `onChRowClick` guards
+   * `<button>` that cycles the tri-state on click and shows / hides the
+   * line outright on double-click (`dblclickLine`, judged from its state
+   * before the first click); `onChRowClick` guards
    * that cycle so it never fires while the rename input is open or when
    * the click lands on the input itself (a single click still cycles; a
    * double-click on the label edits). Sparklines draw REAL data only —
@@ -248,7 +250,16 @@
   function onChRowClick(ch: number, e: MouseEvent) {
     const t = e.target as HTMLElement;
     if (editingCh === ch || t.closest('input, .ch-lab')) return;
-    selection.cycleLine(set.id, ch);
+    selection.clickLine(set.id, ch, e.detail);
+  }
+  // A double-click on the same targets shows or hides the line outright
+  // (`dblclickLine`, judged from its state before the first click), for
+  // flashing lines on and off without passing through fade. The label's
+  // own dblclick (rename) stops propagation, so it never reaches here.
+  function onChRowDblClick(ch: number, e: MouseEvent) {
+    const t = e.target as HTMLElement;
+    if (editingCh === ch || t.closest('input, .ch-lab')) return;
+    selection.dblclickLine(set.id, ch);
   }
 
   const SPARK_W = 46;
@@ -406,9 +417,10 @@
           data-testid={`ch-row-${ch}`}
           title={isTfRef
             ? `${chLab} is the TF reference (input) channel — it pairs with the other channel(s) and has no TF line of its own`
-            : `${rowLab}: ${st} — click to cycle on → fade → off`}
+            : `${rowLab}: ${st} — click to cycle on → fade → off; double-click to show / hide`}
           aria-label={`Toggle channel ${ch} (currently ${st})`}
           onclick={(e) => onChRowClick(ch, e)}
+          ondblclick={(e) => onChRowDblClick(ch, e)}
         >
           <span
             class="ch-chip"

@@ -292,6 +292,40 @@ test.describe('plot legend gestures', () => {
       .toBe(linesBefore); // line restored
   });
 
+  test('a row double-click shows or hides the line outright (no fade)', async ({ page }) => {
+    await openFixture(page);
+    await legendToSW(page);
+    const row = () => page.getByTestId('legend-entry').first();
+    const linesBefore = await page.getByTestId('plot-line').count();
+
+    // shown → hidden in one double-click; its plot line goes.
+    await row().dblclick();
+    await expect(row()).toHaveClass(/off/);
+    await expect.poll(() => page.getByTestId('plot-line').count()).toBeLessThan(linesBefore);
+    // hidden → shown, straight back to full (not faint).
+    await row().dblclick();
+    await expect(row()).not.toHaveClass(/off/);
+    await expect(row()).not.toHaveClass(/fade/);
+    await expect.poll(() => page.getByTestId('plot-line').count()).toBe(linesBefore);
+    // From faint, a double-click hides it.
+    await row().click();
+    await expect(row()).toHaveClass(/fade/);
+    await page.waitForTimeout(600);   // past the double-click window
+    await row().dblclick();
+    await expect(row()).toHaveClass(/off/);
+  });
+
+  test('a tray channel row double-click shows or hides the line outright', async ({ page }) => {
+    await openFixture(page);
+    const badge = page.getByTestId('tray-card-0').getByTestId('ch-row-0').locator('.state-badge');
+    const chip = page.getByTestId('tray-card-0').getByTestId('ch-row-0').locator('.ch-chip');
+    await expect(badge).toHaveText('on');
+    await chip.dblclick();
+    await expect(badge).toHaveText('off');
+    await chip.dblclick();
+    await expect(badge).toHaveText('on');
+  });
+
   test('a drag on a row does NOT cycle it', async ({ page }) => {
     await openFixture(page);
     await legendToSW(page); // clear of the toolbar so the press lands on a row

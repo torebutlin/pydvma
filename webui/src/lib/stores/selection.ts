@@ -115,6 +115,9 @@ export function createSelection() {
    */
   const lineHighlight = writable<{ setId: number; ch: number } | null>(null);
   let nextId = 0;
+  /** A line's state before the last single click on it (`clickLine`), so a
+   *  double-click (`dblclickLine`) can judge show/hide from there. */
+  let beforeClick: { id: number; c: number; state: TriState } | null = null;
 
   const key = (id: number, c: number) => `${id}:${c}`;
   const stateOf = (m: Map<string, TriState>, id: number, c: number) => m.get(key(id, c)) ?? 'on';
@@ -384,6 +387,34 @@ export function createSelection() {
     cycleLine(id: number, c: number) {
       if (!findSet(id)) return;
       mutate(m => m.set(key(id, c), NEXT[stateOf(m, id, c)]));
+    },
+    /**
+     * A click on a line's control (legend row or dot, tray channel row):
+     * cycles the line like {@link cycleLine}, except the second click of a
+     * double-click, which is left to {@link dblclickLine}. `detail` is the
+     * click event's `detail`: 1 for a single click, 2+ for the later clicks
+     * of a multi-click, 0 for a keyboard activation (Enter/Space, which
+     * cycles). Remembers the line's state before this click, so a following
+     * double-click can judge from where the user started.
+     */
+    clickLine(id: number, c: number, detail: number) {
+      if (detail > 1 || !findSet(id)) return;
+      beforeClick = { id, c, state: stateOf(get(states), id, c) };
+      mutate(m => m.set(key(id, c), NEXT[stateOf(m, id, c)]));
+    },
+    /**
+     * A double-click on a line's control: show or hide the line outright,
+     * for flashing between lines without passing through 'fade'. Judged
+     * from the state before the double-click's first click (which
+     * {@link clickLine} has already cycled once): hidden → 'on'; shown or
+     * faint → 'off'. Unknown id is a no-op.
+     */
+    dblclickLine(id: number, c: number) {
+      if (!findSet(id)) return;
+      const b = beforeClick;
+      beforeClick = null;
+      const before = b && b.id === id && b.c === c ? b.state : stateOf(get(states), id, c);
+      mutate(m => m.set(key(id, c), before === 'off' ? 'on' : 'off'));
     },
     /**
      * Cycle a whole set as a group (tray card-title / header click).
