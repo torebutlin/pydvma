@@ -51,6 +51,24 @@ describe('layoutPrintLegend', () => {
     expect(l.box.below).toBe(true); expect(l.box.y).toBeGreaterThanOrEqual(240);
     expect(l.extraHeightPt).toBeGreaterThan(0); expect(l.svg).not.toContain('data-role="plot-bg"');
   });
+  it('a card too wide in its wrap columns steps down to fewer columns before going below', () => {
+    const ents = Array.from({ length: 12 }, (_, i) => entry(`run ${i} · a long descriptive name for this measurement · ch_1/ch_0`));
+    const ws = ents.map((e) => measureText(e.label, 9));
+    const maxW = frame.w - 2 * 5.4;
+    // legendWrapColumns(12) is 2: two columns are too wide even with the shortest label; one column fits.
+    expect(2 * 0.45 * 9 + 2 * (2.1 * 9 + Math.min(...ws)) + 1.2 * 9).toBeGreaterThan(maxW);
+    expect(2 * 0.45 * 9 + 2.1 * 9 + Math.max(...ws)).toBeLessThanOrEqual(maxW);
+    const l = layoutPrintLegend({ legend: { entries: ents, placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame, canvas, belowTopPt: 240, points: [] })!;
+    expect(l.box.below).toBe(false);
+    expect(l.box.h).toBeCloseTo(2 * 0.45 * 9 + 12 * 1.25 * 9, 6);    // one column of 12 rows
+    expect(l.box.w).toBeLessThanOrEqual(maxW);
+    expect(l.svg).toContain('data-role="plot-bg"');
+  });
+  it('a card too wide and too tall at every column count still goes below', () => {
+    const ents = Array.from({ length: 12 }, (_, i) => entry(`run ${i} · a long descriptive name for this measurement · ch_1/ch_0`));
+    const l = layoutPrintLegend({ legend: { entries: ents, placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame: { ...frame, h: 120 }, canvas, belowTopPt: 240, points: [] })!;
+    expect(l.box.below).toBe(true);
+  });
   it("'best' takes the emptiest corner, ties going se, ne, nw, sw", () => {
     const best = (points: [number, number][]) => layoutPrintLegend({ legend: { entries: [entry('a')], placement: { kind: 'best' } }, frame, canvas, belowTopPt: 240, points })!.box;
     const se = best([]);                                              // no points: se

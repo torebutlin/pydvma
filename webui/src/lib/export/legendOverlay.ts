@@ -12,9 +12,9 @@
  *   the canvas instead.
  * - `{ kind: 'best' }` tries the four corners at the inset and takes the one
  *   covering the fewest plotted points, ties going se, ne, nw, sw.
- * - A card that cannot fit the frame (after adding columns), or a best corner
- *   that still covers more than `max(2, 0.5 %)` of the points, becomes an
- *   unboxed block below the axes, which grows the figure.
+ * - A card that fits the frame at no column count, or a best corner that
+ *   still covers more than `max(2, 0.5 %)` of the points, becomes an unboxed
+ *   block below the axes, which grows the figure.
  *
  * Every row is written in full (swatch and label); a label too wide for the
  * canvas is shortened with a trailing `…`.
@@ -25,19 +25,19 @@
  * swatches carry no data-role, so data colours pass through every background
  * mode untouched. Faded rows (swatch and label) sit in a group at 0.55 opacity.
  *
- * `printFigure.ts` imports this module and this module imports its SVG writers
- * and constants, so nothing here reads those at load time, only inside calls.
- * Pure string building: node-testable, no DOM.
+ * Units, type sizes, marker sizes and the SVG writers come from the shared leaf
+ * `printSvg.ts`; from `printFigure.ts` this module takes types only. Pure
+ * string building: node-testable, no DOM.
  */
 import { PRINT_CHROME } from '../plot/chrome';
 import { legendWrapColumns } from '../plot/legendGrid';
 import type { LegendEntry } from '../stores/selection';
-import { FIGURE_FONT_STACK, FONT_ASCENT, FONT_DESCENT, measureText } from './figureFont';
+import { FONT_ASCENT, FONT_DESCENT, measureText } from './figureFont';
+import type { PrintLegend, PrintLegendEntry, PrintText, PtBox } from './printFigure';
 import {
-  CIRCLE_R_PT, CIRCLE_STROKE_PT, CROSS_STROKE_PT, DASH_PT, EDGE_PT, MARK_HALF_PT, PRINT_TYPE,
+  CIRCLE_R_PT, CIRCLE_STROKE_PT, CROSS_STROKE_PT, DASH_PT, EDGE_PT, FONT_FAMILY_ATTR, MARK_HALF_PT, PRINT_TYPE,
   escAttr, escText, opa, sty, u,
-  type PrintLegend, type PrintLegendEntry, type PrintText, type PtBox,
-} from './printFigure';
+} from './printSvg';
 
 /**
  * Gap between the axes frame and a legend card placed inside it, pt
@@ -85,7 +85,10 @@ export interface LegendLayoutArgs {
   frame: PtBox;
   /** The figure's canvas before the legend grows it. */
   canvas: { w: number; h: number };
-  /** Where a below-axes block may start: the bottom of the last pane's lowest text (its x label). */
+  /**
+   * The bottom of the last pane's lowest text (its x label), pt. A block below
+   * the axes starts 0.3 em under it.
+   */
   belowTopPt: number;
   /** Plotted points of the first pane, pt, for `'best'`. */
   points: ReadonlyArray<readonly [number, number]>;
@@ -108,11 +111,10 @@ interface Columns { per: number; colW: number[]; w: number; h: number }
  *
  * Sizes are in em of the 9 pt legend type: swatch 1.6, swatch-to-label gap
  * 0.5, card padding 0.45, row 1.25, column gap 1.2 in a card and 1.6 below the
- * axes. A card starts at `legendWrapColumns(n)` columns (filled top to bottom,
- * each as wide as its longest label) and gains columns while it is taller than
- * the frame less two insets and one more still fits its width; still too tall,
- * or too wide (long labels), it goes below the axes. Outside-right may be as
- * wide as the canvas less its 3 pt edges. The block below starts 0.3 em under
+ * axes. A card's columns fill top to bottom, each as wide as its longest
+ * label; `cardColumns` picks how many must fit the frame less two insets
+ * (outside-right: as wide as the canvas less its 3 pt edges). When no count
+ * fits, the legend goes below the axes. The block below starts 0.3 em under
  * `belowTopPt`, has as many equal columns as fit the frame's width, is centred
  * on the frame and kept 3 pt inside the canvas; `extraHeightPt` keeps 0.3 em
  * under it. A label wider than the canvas less its edges, a swatch, a gap and
@@ -140,16 +142,9 @@ export function layoutPrintLegend(a: LegendLayoutArgs): LegendLayout | null {
   const maxW = outsideRight ? canvas.w - 2 * EDGE_PT : frame.w - 2 * LEGEND_INSET_PT;
   const maxH = frame.h - 2 * LEGEND_INSET_PT;
   const cgap = CARD_COL_GAP_EM * em;
-  const card = (cols: number): Columns => columns(widths, cols, sw + gap, cgap, pad, row);
-  let cols = Math.min(n, legendWrapColumns(n));
-  let c = card(cols);
-  while (c.h > maxH && cols < n) {
-    const next = card(cols + 1);
-    if (next.w > maxW) break;
-    cols += 1; c = next;
-  }
+  const c = cardColumns(n, (k) => columns(widths, k, sw + gap, cgap, pad, row), maxW, maxH);
 
-  if (c.h <= maxH && c.w <= maxW) {
+  if (c) {
     const inset = LEGEND_INSET_PT;
     const lo = { x: frame.x + inset, y: frame.y + inset };
     const hi = { x: frame.x + frame.w - inset - c.w, y: frame.y + frame.h - inset - c.h };
@@ -171,6 +166,35 @@ export function layoutPrintLegend(a: LegendLayoutArgs): LegendLayout | null {
     if (box) return drawCard(legend.entries, labels, widths, box, c, sw, gap, pad, row, cgap);
   }
   return drawBelow(a, labels, widths, sw, gap, row);
+}
+
+/**
+ * The card's columns for `n` rows, sized by `card(k)` for k columns, that fit
+ * `maxW` × `maxH` (pt), or null when no count does. It starts at
+ * `legendWrapColumns(n)`. Too tall there, it takes the fewest more columns
+ * that fit (more columns are never taller). Too wide there, it steps down
+ * towards one column while the card still fits the height (fewer columns are
+ * never shorter), then tries more columns, since width need not grow with the
+ * count.
+ */
+function cardColumns(n: number, card: (k: number) => Columns, maxW: number, maxH: number): Columns | null {
+  const fits = (c: Columns) => c.w <= maxW && c.h <= maxH;
+  const start = Math.min(n, legendWrapColumns(n));
+  const first = card(start);
+  if (fits(first)) return first;
+  const more = (): Columns | null => {
+    for (let k = start + 1; k <= n; k++) { const c = card(k); if (fits(c)) return c; }
+    return null;
+  };
+  const fewer = (): Columns | null => {
+    for (let k = start - 1; k >= 1; k--) {
+      const c = card(k);
+      if (c.h > maxH) return null;
+      if (c.w <= maxW) return c;
+    }
+    return null;
+  };
+  return first.h > maxH ? more() : fewer() ?? more();
 }
 
 /**
@@ -282,7 +306,7 @@ function rowSvg(
       + `stroke-width="${sty(CIRCLE_STROKE_PT)}"/>`);
   }
   const tx = x0 + sw + gap, base = cy + LABEL_MID_EM * em;
-  parts.push(`<text data-role="axis" class="legend" font-family="${escAttr(FIGURE_FONT_STACK)}" font-size="${sty(em)}" `
+  parts.push(`<text data-role="axis" class="legend" font-family="${FONT_FAMILY_ATTR}" font-size="${sty(em)}" `
     + `fill="${PRINT_CHROME.ink}" x="${u(tx)}" y="${u(base)}">${escText(label)}</text>`);
   const body = parts.join('');
   return {

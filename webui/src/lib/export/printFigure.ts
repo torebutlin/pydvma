@@ -9,7 +9,8 @@
  * whose viewBox is in quarter points (`UNITS_PER_PT` = 4 units per pt), plus
  * the box of every text it drew, so the layout claims are testable. A legend,
  * when given, is laid out by `legendOverlay.ts` in the first pane's frame or
- * below the axes.
+ * below the axes. Units, type sizes, marker sizes and the SVG number writers
+ * come from the shared leaf `printSvg.ts`.
  *
  * The chrome follows `figure.ts`'s self-contained-SVG contract: the background
  * is `data-role="plot-bg"`, every gridline, frame and text is
@@ -20,8 +21,16 @@
 import { buildPlot, type BuiltPlot, type PlotLine, type PlotModel } from '../plot/build';
 import { PRINT_CHROME } from '../plot/chrome';
 import { fmtTick, scaleLinear, scaleLog } from '../plot/scales';
-import { FIGURE_FONT_STACK, FONT_ASCENT, FONT_DESCENT, measureText } from './figureFont';
+import { FONT_ASCENT, FONT_DESCENT, measureText } from './figureFont';
 import { layoutPrintLegend } from './legendOverlay';
+import {
+  CIRCLE_R_PT, CIRCLE_STROKE_PT, CROSS_STROKE_PT, DASH_PT, EDGE_PT, FONT_FAMILY_ATTR, MARK_HALF_PT, PRINT_TYPE,
+  UNITS_PER_PT, escAttr, escText, geo, opa, sty, u,
+} from './printSvg';
+
+// The print type sizes and units per pt live in the shared leaf `printSvg.ts`
+// (the legend needs them too); they are part of this module's contract.
+export { PRINT_TYPE, UNITS_PER_PT };
 
 /**
  * What a figure shows, which picks its aspect (`FIGURE_ASPECTS`): `'bode'`
@@ -40,19 +49,6 @@ export const FIGURE_ASPECTS: Readonly<Record<FigureKind, number>> = Object.freez
   bode: 4 / 3,
   nyquist: 1,
 });
-
-/**
- * Print type sizes in points: 10 pt axis labels, 9 pt tick numbers and 9 pt
- * legend text. They never shrink: a narrow figure is laid out again instead.
- */
-export const PRINT_TYPE = { labelPt: 10, tickPt: 9, legendPt: 9 } as const;
-
-/**
- * SVG user units per point. The viewBox is in quarter points, so `buildPlot`,
- * called with the data rect in units, keeps 4 decimation columns per pt
- * (about 4 px each at 600 dpi). Every size in the SVG is given in units.
- */
-export const UNITS_PER_PT = 4;
 
 /**
  * One axes of a figure: the `PlotModel` the screen renders for it, and an
@@ -117,8 +113,6 @@ export const BODE_SPLIT = [0.6, 0.4] as const;
 /** Gap between stacked panes, pt: the top pane's frame to the next pane's frame. */
 export const PANE_GAP_PT = 9;
 
-/** Gap from the canvas edge to the outermost text, pt. */
-export const EDGE_PT = 3;
 /** Gap between the frame and its tick numbers, pt (0.4 × the tick size). */
 const TICK_PAD_PT = 0.4 * PRINT_TYPE.tickPt;
 /** Gap between tick numbers and their axis label, pt (0.35 × the label size). */
@@ -129,47 +123,11 @@ const BASELINE_EM = 0.8;
 const Y_TICK_BASELINE_EM = 0.33;
 /** Data line width per on-screen px, pt. */
 const LINE_PT_PER_PX = 2 / 3;
-/** Dash and gap of a dashed data line, pt (the screen's `4 3` px × 0.6). */
-export const DASH_PT = [2.4, 1.8] as const;
 /** Frame and gridline stroke widths, pt. */
 const FRAME_PT = 0.6;
 const GRID_PT = 0.4;
-/** Marker half-size, pt: a × spans twice this each way. */
-export const MARK_HALF_PT = 2.2;
-/** Stroke width of a × marker, pt. */
-export const CROSS_STROKE_PT = 0.7;
-/** Radius of a ○ marker, pt. */
-export const CIRCLE_R_PT = 2.6;
-/** Stroke width of a ○ marker, pt. */
-export const CIRCLE_STROKE_PT = 0.9;
 /** Points per millimetre. */
 const PT_PER_MM = 72 / 25.4;
-
-// The SVG writers below are shared with the legend (`legendOverlay.ts`), which
-// this module imports in turn. They are function declarations, so they exist
-// before either module has run its top level, whichever loads first.
-
-/** A geometry value (position, size, path coordinate) already in units: one decimal. */
-export function geo(units: number): string {
-  const s = units.toFixed(1);
-  return s === '-0.0' ? '0.0' : s;
-}
-/** A position or size given in pt, written in units (one decimal). */
-export function u(pt: number): string { return geo(pt * UNITS_PER_PT); }
-/**
- * A style number given in pt (stroke width, radius, font size, dash), written
- * in units with at most one decimal and no trailing `.0`.
- */
-export function sty(pt: number): string { return String(+(pt * UNITS_PER_PT).toFixed(1)); }
-/** An opacity, to three decimals. */
-export function opa(v: number): string { return String(+v.toFixed(3)); }
-
-/** Escape SVG text content (`&`, `<`, `>`). */
-export function escText(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-/** Escape a double-quoted SVG attribute value. */
-export function escAttr(s: string): string { return escText(s).replace(/"/g, '&quot;'); }
-
-const FONT_ATTR = escAttr(FIGURE_FONT_STACK);
 
 /**
  * A tick number as printed: `fmtTick`'s text with every hyphen-minus turned
@@ -190,7 +148,7 @@ function flatText(text: string, role: Role, sizePt: number, anchor: Anchor, x: n
   const w = measureText(text, sizePt);
   const left = anchor === 'end' ? x - w : anchor === 'middle' ? x - w / 2 : x;
   return {
-    svg: `<text data-role="axis" class="${role}" font-family="${FONT_ATTR}" font-size="${sty(sizePt)}" `
+    svg: `<text data-role="axis" class="${role}" font-family="${FONT_FAMILY_ATTR}" font-size="${sty(sizePt)}" `
       + `fill="${PRINT_CHROME.ink}" text-anchor="${anchor}" x="${u(x)}" y="${u(y)}">${escText(text)}</text>`,
     text: { text, role, box: { x: left, y: y - FONT_ASCENT * sizePt, w, h: (FONT_ASCENT + FONT_DESCENT) * sizePt } },
   };
@@ -205,7 +163,7 @@ function turnedText(text: string, sizePt: number, angle: -90 | 90, x: number, y:
   const len = measureText(text, sizePt);
   const left = angle === -90 ? x - FONT_ASCENT * sizePt : x - FONT_DESCENT * sizePt;
   return {
-    svg: `<text data-role="axis" class="label" font-family="${FONT_ATTR}" font-size="${sty(sizePt)}" `
+    svg: `<text data-role="axis" class="label" font-family="${FONT_FAMILY_ATTR}" font-size="${sty(sizePt)}" `
       + `fill="${PRINT_CHROME.ink}" text-anchor="middle" transform="translate(${u(x)} ${u(y)}) rotate(${angle})">`
       + `${escText(text)}</text>`,
     text: { text, role: 'label', box: { x: left, y: y - len / 2, w: (FONT_ASCENT + FONT_DESCENT) * sizePt, h: len } },
@@ -373,7 +331,7 @@ function layoutPane(pane: PrintPane, k: number, frame: PtBox, widthPt: number, x
     if (line.marker) {
       const pts = markerPoints(line, model, built, wU, hU);
       parts.push(markersSvg(line, pts));
-      plotted.push(...pts);
+      for (const pt of pts) plotted.push(pt);   // a loop: a spread of many markers could overflow the argument limit
     }
   });
   parts.push('</g>');
