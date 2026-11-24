@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="255.12pt" height="255.12pt" viewBox="0 0 255.12 255.12" font-family="STIX Two Text" fill="#1d2027">
+<rect width="255.12" height="255.12" fill="#fff"/>
+<clipPath id="c0"><rect x="31.04" y="6.92" width="217.58" height="217.58"/></clipPath>
+<line x1="38.82" x2="38.82" y1="6.92" y2="224.50" stroke="#dfe2e7" stroke-width="0.4"/>
+<text x="38.82" y="235.30" font-size="9.0" text-anchor="middle">−3</text>
+<line x1="88.67" x2="88.67" y1="6.92" y2="224.50" stroke="#dfe2e7" stroke-width="0.4"/>
+<text x="88.67" y="235.30" font-size="9.0" text-anchor="middle">−2</text>
+<line x1="138.52" x2="138.52" y1="6.92" y2="224.50" stroke="#dfe2e7" stroke-width="0.4"/>
+<text x="138.52" y="235.30" font-size="9.0" text-anchor="middle">−1</text>
+<line x1="188.38" x2="188.38" y1="6.92" y2="224.50" stroke="#dfe2e7" stroke-width="0.4"/>
+<text x="188.38" y="235.30" font-size="9.0" text-anchor="middle">0</text>
+<line x1="238.23" x2="238.23" y1="6.92" y2="224.50" stroke="#dfe2e7" stroke-width="0.4"/>
+<text x="238.23" y="235.30" font-size="9.0" text-anchor="middle">1</text>
+<line x1="31.04" x2="248.62" y1="205.35" y2="205.35" stroke="#dfe2e7" stroke-width="0.4"/>
+<text x="27.44" y="208.32" font-size="9.0" text-anchor="end">−2</text>
+<line x1="31.04" x2="248.62" y1="155.49" y2="155.49" stroke="#dfe2e7" stroke-width="0.4"/>
+<text x="27.44" y="158.46" font-size="9.0" text-anchor="end">−1</text>
+<line x1="31.04" x2="248.62" y1="105.64" y2="105.64" stroke="#dfe2e7" stroke-width="0.4"/>
+<text x="27.44" y="108.61" font-size="9.0" text-anchor="end">0</text>
+<line x1="31.04" x2="248.62" y1="55.79" y2="55.79" stroke="#dfe2e7" stroke-width="0.4"/>
+<text x="27.44" y="58.76" font-size="9.0" text-anchor="end">1</text>
+<g clip-path="url(#c0)">
+<path d="M189.42 110.64 L189.44 110.77 L189.44 110.95 L189.44 111.15 L189.56 111.28 L189.60 111.39 L189.66 111.70 L189.59 111.85 L189.65 112.02 L189.76 112.45 L189.69 112.62 L189.67 112.84 L189.85 113.25 L189.74 113.57 L189.80 113.87 L189.85 114.19 L189.82 114.60 L189.86 115.02 L189.83 115.73 L189.86 116.04 L189.65 116.68 L190.00 117.54 L190.18 118.49 L190.06 119.34 L189.96 120.13 L189.95 121.28 L189.78 122.90 L189.17 124.16 L189.28 126.16 L189.26 129.48 L188.03 132.34 L187.00 135.33 L186.59 138.42 L178.08 148.12 L172.04 155.91 L164.19 164.52 L125.60 153.37 L89.63 134.98 L89.48 95.31 L116.88 70.40 L141.14 66.90 L154.85 68.31 L164.01 74.03 L171.43 78.01 L174.01 79.93 L175.78 83.28 L178.61 86.00 L180.19 87.98 L181.13 88.81 L182.07 90.31 L182.91 91.45 L183.42 92.16 L183.63 92.24 L184.43 94.02 L184.55 94.52 L184.52 94.91 L184.80 95.66 L185.14 96.33 L185.41 96.54 L185.68 96.90 L185.80 97.35 L185.86 97.67 L186.01 97.95 L186.15 98.23 L186.18 98.47 L186.43 98.84 L186.62 99.12 L186.64 99.33 L186.69 99.53 L186.64 99.65 L186.71 99.90 L186.81 100.04 L186.89 100.19 L186.92 100.33 L187.01 100.48 L186.92 100.58 L187.01 100.75 L187.14 100.86 L187.21 100.94 L187.20 101.10 L187.20 101.27 L187.29 101.36" fill="none" stroke="#dc2626" stroke-width="1.00" opacity="1" stroke-linejoin="round"/>
+</g>
+<rect x="31.04" y="6.92" width="217.58" height="217.58" fill="none" stroke="#3f4652" stroke-width="0.6"/>
+<text x="139.83" y="248.60" font-size="10.0" text-anchor="middle">Real</text>
+<text transform="translate(11.00 115.71) rotate(-90)" font-size="10.0" text-anchor="middle">Imag</text>
+<g transform="translate(134.74 199.75)"><rect width="108.48" height="19.35" rx="2" fill="#fff" fill-opacity="0.92" stroke="#c5cad3" stroke-width="0.5"/><line x1="4.05" x2="18.45" y1="9.68" y2="9.68" stroke="#dc2626" stroke-width="1.6"/><text x="22.95" y="12.74" font-size="9.0">noise 30s · ch_1/ch_0</text></g>
+</svg>
