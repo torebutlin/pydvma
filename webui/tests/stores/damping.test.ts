@@ -105,3 +105,50 @@ describe('miniplot helpers', () => {
     expect(idx.at(-1)).toBe(999);
   });
 });
+
+// ---- trust flags (2026-11-24): why a band metric is greyed --------------
+import { bandFlagReason, dampingBandsCsv, DECAY_NEEDS_DB } from '../../src/lib/stores/damping';
+
+describe('band metric trust flags', () => {
+  it('names each reason in words, with the numbers for a range flag', () => {
+    expect(bandFlagReason('', 'T30', 50)).toBe('');
+    expect(bandFlagReason('range', 'T30', 28.84)).toBe(
+      'The decay starts only 28.8 dB above the noise; T30 needs 45 dB.');
+    expect(bandFlagReason('short', 'T20', 60)).toBe(
+      "Shorter than the band filter's own ringing, so it measures the filter.");
+    expect(bandFlagReason('bent', 'EDT', 60)).toBe(
+      "The fitted line doesn't follow the curve.");
+    expect(bandFlagReason('range,short', 'T20', 30)).toBe(
+      'The decay starts only 30.0 dB above the noise; T20 needs 35 dB. '
+      + "Shorter than the band filter's own ringing, so it measures the filter.");
+  });
+
+  it('mirrors analysis.DECAY_NEEDS_DB', () => {
+    expect(DECAY_NEEDS_DB).toEqual({ EDT: 20, T20: 35, T30: 45 });
+  });
+
+  it('the CSV carries the range, the cut and the flags', () => {
+    const b = {
+      bands: 'octave', startTime: 0.02,
+      fc: new Float64Array([1000]), fLo: new Float64Array([707.1]), fHi: new Float64Array([1414.2]),
+      EDT: new Float64Array([2.4]), T20: new Float64Array([2.7]), T30: new Float64Array([NaN]),
+      T60: new Float64Array([2.4]), Qn: new Float64Array([1090]),
+      rangeDb: new Float64Array([28.8]), cutTime: new Float64Array([1.09]),
+      flags: { EDT: [''], T20: ['range'], T30: [''] },
+      bandData: [],
+    } as DampingBandsResult;
+    expect(dampingBandsCsv(b)).toBe(
+      'fc_Hz,f_lo_Hz,f_hi_Hz,EDT_s,T20_s,T30_s,T60_s,Qn,range_dB,cut_s,EDT_flag,T20_flag,T30_flag\n'
+      + '1000,707.1,1414.2,2.4,2.7,,2.4,1090,28.8,1.09,,range,\n');
+  });
+
+  it('the CSV from an older engine leaves the new columns empty', () => {
+    const b = {
+      bands: 'octave', startTime: 0,
+      fc: new Float64Array([100]), fLo: new Float64Array([70]), fHi: new Float64Array([140]),
+      EDT: new Float64Array([0.1]), T20: new Float64Array([0.2]), T30: new Float64Array([0.3]),
+      T60: new Float64Array([0.3]), Qn: new Float64Array([5]), bandData: [],
+    } as DampingBandsResult;
+    expect(dampingBandsCsv(b).split('\n')[1]).toBe('100,70,140,0.1,0.2,0.3,0.3,5,,,,,');
+  });
+});

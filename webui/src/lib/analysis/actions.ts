@@ -4404,8 +4404,17 @@ export function createActions(engine: EngineStore, selection: Selection, setting
           edcT: axisData(mval(b, 'edc_t')), edcDb: axisData(mval(b, 'edc_db')),
           fitT: fitT === undefined ? null : axisData(fitT),
           fitDb: fitT === undefined ? null : axisData(mval(b, 'fit_db')),
+          cutT: mval(b, 'cut_t') == null ? null : num(mval(b, 'cut_t')),
         };
       });
+    // 2026-11-24 engines: each band's floor, cut and trust flags.
+    const strs = (k: string): string[] =>
+      Array.from((mval(res, k) ?? []) as ArrayLike<unknown>, (v) => String(v ?? ''));
+    const floor = mval(res, 'cut_time') == null ? {} : {
+      rangeDb: axisData(mval(res, 'range_db')),
+      cutTime: axisData(mval(res, 'cut_time')),
+      flags: { EDT: strs('EDT_flag'), T20: strs('T20_flag'), T30: strs('T30_flag') },
+    };
     return {
       bands: String(mval(res, 'bands')) as BandLadder,
       startTime: num(mval(res, 'start_time')),
@@ -4415,6 +4424,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       T30: axisData(mval(res, 'T30')), T60: axisData(mval(res, 'T60')),
       Qn: axisData(mval(res, 'Qn')),
       bandData,
+      ...floor,
     };
   }
 

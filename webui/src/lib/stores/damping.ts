@@ -52,7 +52,13 @@ export interface DampingBand {
   edcDb: Float64Array;
   fitT: Float64Array | null;
   fitDb: Float64Array | null;
+  /** Where the curve stops: the decay meets the noise (s after the start);
+   *  null from an engine older than 2026-11-24. */
+  cutT: number | null;
 }
+
+/** A band metric that can be flagged as untrustworthy. */
+export type BandMetric = 'EDT' | 'T20' | 'T30';
 
 /** Decoded `calc_damping_bands` result (NaN metric = insufficient decay). */
 export interface DampingBandsResult {
@@ -67,6 +73,51 @@ export interface DampingBandsResult {
   T60: Float64Array;
   Qn: Float64Array;
   bandData: DampingBand[];
+  /** Each band's loudest block above its noise floor (dB). Absent from an
+   *  engine older than 2026-11-24, as are `cutTime` and `flags`. */
+  rangeDb?: Float64Array;
+  /** Where each band's curve stops, s after the start. */
+  cutTime?: Float64Array;
+  /** Why each metric is not trusted: comma-joined 'range' / 'short' /
+   *  'bent', '' when it is (see `bandFlagReason`). */
+  flags?: Record<BandMetric, string[]>;
+}
+
+/**
+ * dB the decay must start above the noise for each band metric to be
+ * trusted (ISO 3382). KEEP IN SYNC with pydvma's `analysis.DECAY_NEEDS_DB`.
+ */
+export const DECAY_NEEDS_DB: Record<BandMetric, number> = { EDT: 20, T20: 35, T30: 45 };
+
+/**
+ * A band metric's flag (`'range'`, `'short'`, `'bent'`, comma-joined; `''`
+ * when trusted) in words, for the greyed cell's tooltip.
+ */
+export function bandFlagReason(flag: string, metric: BandMetric, rangeDb: number): string {
+  const why: Record<string, string> = {
+    range: `The decay starts only ${rangeDb.toFixed(1)} dB above the noise; `
+      + `${metric} needs ${DECAY_NEEDS_DB[metric]} dB.`,
+    short: "Shorter than the band filter's own ringing, so it measures the filter.",
+    bent: "The fitted line doesn't follow the curve.",
+  };
+  return flag.split(',').filter(Boolean).map((f) => why[f] ?? f).join(' ');
+}
+
+/**
+ * The band metrics as CSV, one row per band: NaN (and a column an older
+ * engine did not send) is an empty cell, matching the table's em-dash.
+ */
+export function dampingBandsCsv(b: DampingBandsResult): string {
+  const cell = (v: number | undefined) => (v !== undefined && Number.isFinite(v) ? String(v) : '');
+  const rows = ['fc_Hz,f_lo_Hz,f_hi_Hz,EDT_s,T20_s,T30_s,T60_s,Qn,range_dB,cut_s,EDT_flag,T20_flag,T30_flag'];
+  for (let i = 0; i < b.fc.length; i++) {
+    rows.push([
+      ...[b.fc[i], b.fLo[i], b.fHi[i], b.EDT[i], b.T20[i], b.T30[i], b.T60[i], b.Qn[i],
+        b.rangeDb?.[i], b.cutTime?.[i]].map(cell),
+      b.flags?.EDT[i] ?? '', b.flags?.T20[i] ?? '', b.flags?.T30[i] ?? '',
+    ].join(','));
+  }
+  return rows.join('\n') + '\n';
 }
 
 export type BandLadder = 'all' | 'octave' | 'third-octave' | 'tenth-decade';

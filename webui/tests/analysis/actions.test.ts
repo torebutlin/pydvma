@@ -1532,6 +1532,48 @@ test('null band scalars decode as NaN, not 0 (calcDampingBands)', async () => {
   expect(res!.bandData[0].fLo).toBe(70);
 });
 
+test('band noise floor, cut and trust flags decode (calcDampingBands, 2026-11-24)', async () => {
+  const { engine } = fakeEngine(async () => ({
+    bands: 'octave', start_time: 0.02,
+    fc: real([2], [1000, 2000]), f_lo: real([2], [707, 1414]), f_hi: real([2], [1414, 2828]),
+    EDT: real([2], [2.4, 1.2]), T20: real([2], [2.7, 1.4]),
+    T30: real([2], [NaN, 1.4]), T60: real([2], [2.4, 1.4]), Qn: real([2], [1090, 1270]),
+    noise_db: real([2], [-28.8, -48.1]), range_db: real([2], [28.8, 48.1]),
+    cut_time: real([2], [1.09, 0.99]),
+    EDT_flag: ['', ''], T20_flag: ['range', ''], T30_flag: ['', ''],
+    band_data: [
+      { fc: 1000, f_lo: 707, f_hi: 1414, edc_t: real([1], [0]), edc_db: real([1], [0]), cut_t: 1.09 },
+      { fc: 2000, f_lo: 1414, f_hi: 2828, edc_t: real([1], [0]), edc_db: real([1], [0]) },
+    ],
+  }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const a = get(sel.sets)[0].id;
+
+  const res = await actions.calcDampingBands(a, 0, { ladder: 'octave' });
+  expect(Array.from(res!.rangeDb!)).toEqual([28.8, 48.1]);
+  expect(Array.from(res!.cutTime!)).toEqual([1.09, 0.99]);
+  expect(res!.flags).toEqual({ EDT: ['', ''], T20: ['range', ''], T30: ['', ''] });
+  expect(res!.bandData[0].cutT).toBe(1.09);
+  expect(res!.bandData[1].cutT).toBeNull();
+});
+
+test('an older engine without the floor fields decodes them as absent', async () => {
+  const { engine } = fakeEngine(async () => ({
+    bands: 'octave', start_time: 0,
+    fc: real([1], [100]), f_lo: real([1], [70]), f_hi: real([1], [140]),
+    EDT: real([1], [0.1]), T20: real([1], [0.2]),
+    T30: real([1], [0.3]), T60: real([1], [0.6]), Qn: real([1], [5]),
+    band_data: [{ fc: 100, f_lo: 70, f_hi: 140, edc_t: real([1], [0]), edc_db: real([1], [0]) }],
+  }));
+  const { sel, actions } = harness(engine);
+  actions.loadDataset(makeDataset(1));
+  const res = await actions.calcDampingBands(get(sel.sets)[0].id, 0, { ladder: 'octave' });
+  expect(res!.rangeDb).toBeUndefined();
+  expect(res!.flags).toBeUndefined();
+  expect(res!.bandData[0].cutT).toBeNull();
+});
+
 // ---- Materialise on Save (derived-data save round, Task 3) ----------------
 // Save turns the app's COMPUTED views into real items in the document: an
 // FFT becomes a FreqData, a TF a TfData (coherence included), each linked to

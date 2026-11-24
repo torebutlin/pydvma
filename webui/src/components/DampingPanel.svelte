@@ -37,7 +37,8 @@
    * engine infers / uses its automatic choice, then echoes the resolved
    * value back into the field).
    */
-  import type { DampingStore, DampingMode, DampingChart, BandLadder, DampingBandsResult } from '../lib/stores/damping';
+  import type { DampingStore, DampingMode, DampingChart, BandLadder, BandMetric } from '../lib/stores/damping';
+  import { bandFlagReason, dampingBandsCsv } from '../lib/stores/damping';
   import { LINE_PALETTE } from '../lib/stores/selection';
   import { niceTicks, fmtTick } from '../lib/plot/scales';
   import { CHROME } from '../lib/plot/chrome';
@@ -209,22 +210,18 @@
     }
   }
 
-  /** Band metrics as CSV (NaN → empty cell, matching the table's em-dash). */
-  function bandsCsv(b: DampingBandsResult): string {
-    const cell = (v: number) => (Number.isFinite(v) ? String(v) : '');
-    const rows = ['fc_Hz,f_lo_Hz,f_hi_Hz,EDT_s,T20_s,T30_s,T60_s,Qn'];
-    for (let i = 0; i < b.fc.length; i++) {
-      rows.push([b.fc[i], b.fLo[i], b.fHi[i], b.EDT[i], b.T20[i], b.T30[i], b.T60[i], b.Qn[i]]
-        .map(cell).join(','));
-    }
-    return rows.join('\n') + '\n';
-  }
+  /** A band metric's trust flag ('' when trusted, or from an older engine). */
+  const bandFlag = (m: BandMetric, i: number): string => dmp.bands?.flags?.[m][i] ?? '';
+  const bandWhy = (m: BandMetric, i: number): string | undefined => {
+    const f = bandFlag(m, i);
+    return f ? bandFlagReason(f, m, dmp.bands?.rangeDb?.[i] ?? NaN) : undefined;
+  };
   async function saveBandsCsv() {
     if (!dmp.bands || saving) return;
     saving = true;
     try {
       const name = `damping-bands_${stamp()}.csv`;
-      const where = await onsavefile(name, new TextEncoder().encode(bandsCsv(dmp.bands)));
+      const where = await onsavefile(name, new TextEncoder().encode(dampingBandsCsv(dmp.bands)));
       if (where !== null) notify(`Saved ${where ?? name}`, 'success');
     } catch (e) {
       notify(`CSV save failed: ${e instanceof Error ? e.message : e}`, 'error');
@@ -454,6 +451,13 @@
                     <polyline class="dp-edc-fit" fill="none" stroke={colour(i)} stroke-width="2" stroke-dasharray="6 3"
                       points={polylinePoints(b.fitT, b.fitDb, edcDom, iw(edcW), ih(edcH))} />
                   {/if}
+                  {#if b.cutT !== null && b.edcDb.length > 0}
+                    <!-- where this band's curve stops: its decay meets the noise -->
+                    {@const cx = pxX(b.cutT, edcDom, iw(edcW))}
+                    {@const cy = pxY(b.edcDb[b.edcDb.length - 1], edcDom, ih(edcH))}
+                    <line class="dp-edc-cut" x1={cx} x2={cx} y1={cy - 4} y2={cy + 4}
+                      stroke={colour(i)} stroke-width="1.6" data-testid="damping-edc-cut" />
+                  {/if}
                 </g>
               {/each}
             </svg>
@@ -484,16 +488,17 @@
                 {#each Array.from(dmp.bands.fc) as fc, i (i)}
                   <tr>
                     <td><i class="dp-dot" style="background:{colour(i)}"></i>{fmt1(fc)}</td>
-                    <td>{fmt2(dmp.bands.EDT[i])}</td>
-                    <td>{fmt2(dmp.bands.T20[i])}</td>
-                    <td>{fmt2(dmp.bands.T30[i])}</td>
+                    {#each ['EDT', 'T20', 'T30'] as const as m (m)}
+                      <td class:dp-untrusted={!!bandFlag(m, i)} title={bandWhy(m, i)}
+                        data-testid="damping-band-{m}-{i}">{fmt2(dmp.bands[m][i])}</td>
+                    {/each}
                     <td>{fmt2(dmp.bands.T60[i])}</td>
                     <td>{fmt1(dmp.bands.Qn[i])}</td>
                   </tr>
                 {/each}
               </tbody>
             </table>
-            <p class="dp-note">— means that band's decay range was too small to fit (not an error). T60 prefers the T30 window, falling back to T20.</p>
+            <p class="dp-note">Each band's decay is cut where it meets the noise. Greyed values are not trusted (hover for why); — means the decay never spanned that window. T60 is the first trusted of T30, T20 and EDT.</p>
           {:else}
             <p class="dp-note">No band metrics yet.</p>
           {/if}
@@ -680,6 +685,7 @@
     white-space: nowrap;
   }
   .dp-table th:first-child, .dp-table td:first-child { text-align: left; }
+  .dp-table td.dp-untrusted { color: var(--muted-2); cursor: help; text-decoration: underline dotted; }
   .dp-table th {
     font-weight: 600;
     color: var(--muted);
