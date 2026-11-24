@@ -219,3 +219,30 @@ class TestCalcDampingBands:
                                       start_time=0.25)
         assert len(_vals(out['fc'])) == 1
         assert abs(out['start_time'] - 0.25) < 2.0 / FS
+
+    def test_noise_floor_outputs_marshal(self):
+        """2026-11-24: the floor, the range above it, where each curve stops,
+        and why a metric is not trusted reach the panel."""
+        p = self._noise_payload()
+        out = glue.calc_damping_bands(p['time_axis'], p['time_data'],
+                                      p['n_channels'], p['fs'], ch=0,
+                                      bands='octave', f_min=80.0, f_max=800.0)
+        fc = _vals(out['fc'])
+        for key in ('noise_db', 'range_db', 'cut_time'):
+            assert _vals(out[key]).shape == fc.shape, key
+        for key in ('EDT_flag', 'T20_flag', 'T30_flag'):
+            assert isinstance(out[key], list) and len(out[key]) == len(fc)
+            assert all(isinstance(s, str) for s in out[key])
+        for b, c in zip(out['band_data'], _vals(out['cut_time'])):
+            assert b['cut_t'] == pytest.approx(c)
+
+
+class TestCalcDampingFloor:
+    def test_each_fit_carries_its_floor_and_crossover(self):
+        p = _payload()
+        out = glue.calc_damping(p['time_axis'], p['time_data'], p['n_channels'],
+                                p['fs'], ch=0, nperseg=256)
+        assert out['fits']
+        for m in out['fits']:
+            assert np.isfinite(m['t_cross']) and m['range_db'] > 10.0
+            assert np.isfinite(m['noise'])

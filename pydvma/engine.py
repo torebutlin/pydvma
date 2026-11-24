@@ -1304,7 +1304,10 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
     actually used, the start-slice spectrum (``slice_freq`` / ``slice_mag``),
     the candidate peaks (``peaks_freq`` / ``peaks_mag``), and per-fitted-mode
     decay arrays (``fits[i].t_fit / real_fit / real_data / f_peak / Qn`` — the
-    "Real Part of Log(S) vs fitted curve" lines the Qt DampingFitWindow drew).
+    "Real Part of Log(S) vs fitted curve" lines the Qt DampingFitWindow drew),
+    plus each fit's noise floor ``noise`` (ln|S|), ``t_cross`` (s, where the
+    decay meets it) and ``range_db``: only the decay above the floor is fitted
+    (see `analysis._fit_modes_from_image`).
 
     Stale-wheel guard: ``method='cwt'`` against a wheel without
     ``calculate_damping_from_cwt`` raises a clear "engine wheel too old"
@@ -1374,6 +1377,8 @@ def calc_damping(time_axis, time_data, n_channels, fs, ch, nperseg, start_time=N
                 'real_data': _arr(np.asarray(m['real_data'], dtype=np.float64)),
                 'f_peak': float(m['f_peak']),
                 'Qn': float(m['Qn']),
+                # 2026-11-24 wheels: the bin's floor and where the decay meets it.
+                **{k: float(m[k]) for k in ('noise', 't_cross', 'range_db') if k in m},
             }
             for m in fit['fits']
         ],
@@ -1406,7 +1411,11 @@ def calc_damping_bands(time_axis, time_data, n_channels, fs, ch, bands='octave',
     ``start_time`` (s) picks the decay start (None infers from pretrigger);
     ``f_min`` / ``f_max`` bound the ladder (None -> pydvma's ``4/T .. 0.4*fs``
     default). Returns the ladder arrays plus per-band EDC + T60-fit-line
-    plotting payloads (decimated in pydvma to keep the transfer small).
+    plotting payloads (decimated in pydvma to keep the transfer small), and
+    each band's ``noise_db`` / ``range_db`` / ``cut_time`` and the
+    ``EDT_flag`` / ``T20_flag`` / ``T30_flag`` lists of reasons a metric is
+    not trusted (``''`` when it is): the curve stops where the decay meets
+    the noise (see `analysis.calculate_damping_by_band`).
 
     Stale-wheel guard: raises a clear "needs a newer engine" error when the
     loaded wheel predates ``calculate_damping_by_band``.
@@ -1434,11 +1443,22 @@ def calc_damping_bands(time_axis, time_data, n_channels, fs, ch, bands='octave',
         'Qn': _arr(out['Qn']),
         'band_data': [],
     }
+    if 'cut_time' in out:
+        # 2026-11-24 wheels: each band's floor, range above it, cut, and the
+        # reasons a metric is not trusted ('' when it is).
+        res.update({
+            'noise_db': _arr(out['noise_db']), 'range_db': _arr(out['range_db']),
+            'cut_time': _arr(out['cut_time']),
+            'EDT_flag': list(out['EDT_flag']), 'T20_flag': list(out['T20_flag']),
+            'T30_flag': list(out['T30_flag']),
+        })
     for b in out['band_data']:
         item = {
             'fc': b['fc'], 'f_lo': b['f_lo'], 'f_hi': b['f_hi'],
             'edc_t': _arr(b['edc_t']), 'edc_db': _arr(b['edc_db']),
         }
+        if 'cut_t' in b:
+            item['cut_t'] = float(b['cut_t'])
         if 'fit_t' in b:
             item['fit_t'] = _arr(b['fit_t'])
             item['fit_db'] = _arr(b['fit_db'])
