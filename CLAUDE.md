@@ -8,6 +8,30 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-11-24 (Mac; committed, NOT pushed; CHANGELOG `## Unreleased`,
+no version bump): **the damping fits stop where the decay meets the
+noise**, after vibration_apps' `shared/js/dsp/decay.js` (reverb app; Tore's
+ask). Design/plan `dev/plans/2026-11-24-damping-noise-floor-*`. Bands
+(`calculate_damping_by_band`): floor = last tenth, line from the loudest
+block to floor + 10 dB, Schroeder integral cut at the crossover + tail
+energy; EDT/T20/T30 flags `range`/`short`/`bent` (`DECAY_NEEDS_DB`,
+16/B, `DECAY_DROP_RANGE`); T60 = first trusted of T30/T20/EDT else NaN;
+onset start without a pretrigger (the app NEVER sends one). Peaks
+(`_fit_modes_from_image`): per-bin floor, straight line through ln|S|
+only above floor + 10 dB (≥3 frames); the CWT ignores its last
+`CWT_DAMPING_END_SCALES` = 7 wavelet scales (FFT wrap brings the record's
+start back there — the old free-floor model had hidden it). Evidence: 4C6
+1 kHz octave 18.4 → 2.4 s; peaks Q error p90 10–14 % → 6–8 % over 30
+seeds. App greys untrusted band cells, ticks each EDC's cut, CSV gains
+range/cut/flags. Engine wheel rebuilt (2.9.1 name, byte-identical).
+Suites: pytest 1668/7, vitest 1488/1, check 0/0, damping Playwright 2/2
+@engine, mkdocs --strict clean. vibration_apps reverb reviewed: no bug
+(22 decay tests pass); its crossover line stops at the first block within
+10 dB of the floor, so a deep beat can end it early (Lundeby would
+iterate). **Also in flight: publication-quality Save Figure** — design
+`dev/plans/2026-11-24-publication-figure-design.md` (approved), plan
+`…-plan.md` (written in its own session); not implemented yet.
+
 **v2.9.1 IS RELEASED END TO END (2026-11-09, Mac).** Patch, two web-app
 changes: the stage tabs follow a measurement's order (Setup, Live,
 Acquire, Time, Frequency, TF, Fit, Sonogram, Nonlin, Export;
