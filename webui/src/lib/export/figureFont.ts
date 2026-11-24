@@ -55,9 +55,12 @@ let fontBase64: Promise<string> | null = null;
 /**
  * The TTF as base64, for embedding in an SVG or PDF. Fetched once and cached;
  * the file's URL is imported lazily so node tests and app start never load it.
+ * A failed fetch is not cached: the next call fetches again, so one transient
+ * failure does not break every later Save Figure until the page is reloaded.
  */
 export function loadFigureFontBase64(): Promise<string> {
-  fontBase64 ??= (async () => {
+  if (fontBase64) return fontBase64;
+  const pending = (async () => {
     const { default: url } = await import('./fonts/PydvmaFigureSerif.ttf?url');
     const res = await fetch(url);
     if (!res.ok) throw new Error(`figure font fetch failed: ${res.status}`);
@@ -68,5 +71,9 @@ export function loadFigureFontBase64(): Promise<string> {
     }
     return btoa(bin);
   })();
-  return fontBase64;
+  fontBase64 = pending;
+  // Attached before the caller's own handler, so the cache is clear by the
+  // time the caller sees the rejection.
+  pending.catch(() => { if (fontBase64 === pending) fontBase64 = null; });
+  return pending;
 }

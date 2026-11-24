@@ -61,6 +61,21 @@ export function figureNotes(
   return { grown, glyphs };
 }
 
+/**
+ * The error toast for a figure save that threw. When some files were already
+ * written (a PNG, then its PDF failed), it names them first so the message does
+ * not read as though nothing was saved: `Saved a.png; PDF failed: <reason>`.
+ * With nothing written: `<what> failed: <reason>`. `failing` is the format
+ * being written when it threw (null before any file was started).
+ */
+export function figureSaveError(
+  what: string, saved: readonly string[], failing: FigureFormat | null, e: unknown,
+): string {
+  const reason = e instanceof Error ? e.message : String(e);
+  if (!saved.length) return `${what} failed: ${reason}`;
+  return `Saved ${saved.join(' and ')}; ${failing ? failing.toUpperCase() : what} failed: ${reason}`;
+}
+
 /** The extensions a figure name may carry; the served Save dialog keeps either as typed. */
 export const FIGURE_EXTENSIONS = ['.png', '.pdf'];
 

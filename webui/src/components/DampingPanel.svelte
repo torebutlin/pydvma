@@ -43,7 +43,8 @@
   import { niceTicks, fmtTick } from '../lib/plot/scales';
   import { CHROME } from '../lib/plot/chrome';
   import { figureBytes } from '../lib/export/figure';
-  import { figureFormats, figureNotes, figureOptions, clampFigureWidth } from '../lib/export/figureSave';
+  import { figureFormats, figureNotes, figureOptions, figureSaveError, clampFigureWidth, type FigureFormat }
+    from '../lib/export/figureSave';
   import { printFigureSvg } from '../lib/export/printFigure';
   import {
     dampingDecayFigure, dampingEdcFigure, dampingSpectrumFigure, decayDomain, edcDomain,
@@ -177,6 +178,8 @@
       return;
     }
     saving = true;
+    const saved: string[] = [];
+    let failing: FigureFormat | null = null;
     try {
       const width = clampFigureWidth(opts.widthMm);
       const input = id === 'spectrum' ? (dmp.peaks && dampingSpectrumFigure(dmp.peaks, width))
@@ -185,8 +188,8 @@
       if (!input) return;
       const fig = printFigureSvg(input);
       const stampNow = stamp();
-      const saved: string[] = [];
       for (const format of formats) {
+        failing = format;
         const name = `damping-${id}_${stampNow}.${format}`;
         const where = await onsavefile(name, await figureBytes(fig, format, opts.bg));
         if (where === null) break;   // the user cancelled the save: skip the rest
@@ -198,7 +201,8 @@
         if (notes.glyphs) notify(notes.glyphs, 'info');
       }
     } catch (e) {
-      notify(`Chart save failed: ${e instanceof Error ? e.message : e}`, 'error');
+      // A PDF failing after its PNG was written still says the PNG was saved.
+      notify(figureSaveError('Chart save', saved, failing, e), 'error');
     } finally {
       saving = false;
     }

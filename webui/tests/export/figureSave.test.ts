@@ -1,7 +1,8 @@
 import { expect, test } from 'vitest';
 import { get } from 'svelte/store';
 import {
-  clampFigureWidth, defaultFigureName, figureFormats, figureNotes, figureOptions, figureStem, figureTargets,
+  clampFigureWidth, defaultFigureName, figureFormats, figureNotes, figureOptions, figureSaveError, figureStem,
+  figureTargets,
 } from '../../src/lib/export/figureSave';
 
 test('the default figure name is stamped from the clock, without an extension', () => {
@@ -63,4 +64,12 @@ test('figureNotes says when a figure grew, and names glyphs the PDF lacks only w
   expect(figureNotes({ grown: false, texts: [t('漢 set')] }, ['png', 'pdf']).glyphs)
     .toBe("The PDF can't draw 漢: those characters print as boxes there. The PNG shows them.");
   expect(figureNotes({ grown: false, texts: [t('ok')] }, ['pdf'])).toEqual({ grown: null, glyphs: null });
+});
+
+test('a save that fails part-way names the files already written', () => {
+  const e = new Error('font fetch failed: 503');
+  expect(figureSaveError('Figure export', ['/lab/a.png'], 'pdf', e))
+    .toBe('Saved /lab/a.png; PDF failed: font fetch failed: 503');
+  expect(figureSaveError('Chart save', [], 'png', e)).toBe('Chart save failed: font fetch failed: 503');
+  expect(figureSaveError('Figure export', [], null, 'boom')).toBe('Figure export failed: boom');
 });

@@ -21,7 +21,8 @@ export const PRINT_TYPE = { labelPt: 10, tickPt: 9, legendPt: 9 } as const;
 /**
  * SVG user units per point. The viewBox is in quarter points, so `buildPlot`,
  * called with the data rect in units, keeps 4 decimation columns per pt
- * (about 4 px each at 600 dpi). Every size in the SVG is given in units.
+ * (288 per inch: about 2.1 px each at 600 dpi, where a pt is 8.33 px). Every
+ * size in the SVG is given in units.
  */
 export const UNITS_PER_PT = 4;
 

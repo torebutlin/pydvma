@@ -61,8 +61,8 @@
   import { exportBytes, type Exporter } from './lib/export/data';
   import { figureBytes } from './lib/export/figure';
   import {
-    FIGURE_EXTENSIONS, defaultFigureName, figureFormats, figureNotes, figureOptions, figureTargets,
-    type FigureFormat,
+    FIGURE_EXTENSIONS, defaultFigureName, figureFormats, figureNotes, figureOptions, figureSaveError,
+    figureTargets, type FigureFormat,
   } from './lib/export/figureSave';
   import { printFigureSvg, type PrintFigure } from './lib/export/printFigure';
   import { viewFigureInput } from './lib/export/viewFigure';
@@ -1114,10 +1114,12 @@
       ? await askFile('save', 'Save figure', suggested, FIGURE_EXTENSIONS)
       : base === null ? window.prompt('Save figure as…', suggested) : suggested;
     if (!name?.trim()) return; // cancelled
+    const saved: string[] = [];
+    const written: FigureFormat[] = [];
+    let failing: FigureFormat | null = null;
     try {
-      const saved: string[] = [];
-      const written: FigureFormat[] = [];
       for (const target of figureTargets(name.trim(), formats)) {
+        failing = target.format;
         const bytes = await figureBytes(fig, target.format, opts.bg);
         const where = server
           ? await serverWrite(target.name, bytes)
@@ -1134,7 +1136,8 @@
         if (notes.glyphs) toasts.push(notes.glyphs, { level: 'info' });
       }
     } catch (e) {
-      toasts.push(`Figure export failed: ${e instanceof Error ? e.message : e}`, { level: 'error' });
+      // A PDF failing after its PNG was written still says the PNG was saved.
+      toasts.push(figureSaveError('Figure export', saved, failing, e), { level: 'error' });
     }
   };
 
