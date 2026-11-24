@@ -56,14 +56,19 @@ test('clampFigureWidth keeps the width in 40-300 mm and falls back to 160', () =
   expect(clampFigureWidth(NaN)).toBe(160); expect(clampFigureWidth('')).toBe(160); expect(clampFigureWidth(undefined)).toBe(160);
 });
 
-test('figureNotes says when a figure grew, and names glyphs the PDF lacks only when writing a PDF', () => {
+test('figureNotes says why a figure grew, and names glyphs the PDF lacks only when writing a PDF', () => {
   const t = (text: string) => ({ text, role: 'legend' as const, box: { x: 0, y: 0, w: 1, h: 1 } });
-  expect(figureNotes({ grown: true, texts: [] }, ['png']).grown)
+  const none = { labels: false, legend: false };
+  expect(figureNotes({ grownFor: { labels: true, legend: false }, texts: [] }, ['png']).grown)
     .toBe('laid out taller than its usual shape so the labels fit at 10 pt');
-  expect(figureNotes({ grown: false, texts: [t('漢 set')] }, ['png']).glyphs).toBeNull();
-  expect(figureNotes({ grown: false, texts: [t('漢 set')] }, ['png', 'pdf']).glyphs)
+  expect(figureNotes({ grownFor: { labels: false, legend: true }, texts: [] }, ['png']).grown)
+    .toBe('laid out taller than its usual shape to fit the legend below the axes');
+  expect(figureNotes({ grownFor: { labels: true, legend: true }, texts: [] }, ['png']).grown)
+    .toBe('laid out taller than its usual shape so the labels fit at 10 pt and the legend fits below the axes');
+  expect(figureNotes({ grownFor: none, texts: [t('漢 set')] }, ['png']).glyphs).toBeNull();
+  expect(figureNotes({ grownFor: none, texts: [t('漢 set')] }, ['png', 'pdf']).glyphs)
     .toBe("The PDF can't draw 漢: those characters print as boxes there. The PNG shows them.");
-  expect(figureNotes({ grown: false, texts: [t('ok')] }, ['pdf'])).toEqual({ grown: null, glyphs: null });
+  expect(figureNotes({ grownFor: none, texts: [t('ok')] }, ['pdf'])).toEqual({ grown: null, glyphs: null });
 });
 
 test('a save that fails part-way names the files already written', () => {

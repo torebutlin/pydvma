@@ -13,8 +13,8 @@
  * come from the shared leaf `printSvg.ts`.
  *
  * The chrome follows `figure.ts`'s self-contained-SVG contract: the background
- * is `data-role="plot-bg"`, every gridline, frame and text is
- * `data-role="axis"`, and each carries its `PRINT_CHROME` hex inline, so
+ * is `data-role="plot-bg"`, the legend card `data-role="legend-bg"`, every
+ * gridline, frame and text is `data-role="axis"`, and each carries its `PRINT_CHROME` hex inline, so
  * `prepareSvg`'s transparent and dark modes restyle it. Data lines carry no
  * data-role and keep their colours.
  */
@@ -96,12 +96,15 @@ export interface PrintText { text: string; role: 'tick' | 'label' | 'legend'; bo
 /**
  * A laid-out figure: the SVG, its size in points, whether it was laid out
  * taller than its kind's aspect to fit a label or a legend below the axes
- * (`grown`), every text drawn, the axes frame of each pane in points, and the
+ * (`grown`, with the reasons in `grownFor`: `labels` when a pane's rotated
+ * labels needed more height, `legend` when a legend below the axes added
+ * height), every text drawn, the axes frame of each pane in points, and the
  * legend's box in points (`below` when it sits under the axes), or null with
  * no legend.
  */
 export interface PrintFigure {
   svg: string; widthPt: number; heightPt: number; grown: boolean;
+  grownFor: { labels: boolean; legend: boolean };
   texts: PrintText[]; frames: PtBox[]; legendBox: (PtBox & { below: boolean }) | null;
 }
 
@@ -428,7 +431,7 @@ function markersSvg(line: PlotLine, pts: ReadonlyArray<readonly [number, number]
  * least enough that the end x tick numbers stay 1 pt inside the canvas; 5.4 pt
  * on top; the x tick and x label lines below. When a rotated y or y2 label
  * plus 18 pt is longer than the data height, the height grows to fit and
- * `grown` is true; the type never shrinks.
+ * `grown` and `grownFor.labels` are true; the type never shrinks.
  *
  * A `squareAspect` (Nyquist) pane draws in a centred square. `buildPlot` runs
  * at the data rect's size in units, so the ticks and decimation match the
@@ -450,7 +453,7 @@ function markersSvg(line: PlotLine, pts: ReadonlyArray<readonly [number, number]
  * first pane's frame (Bode: the magnitude pane), at its placement, `'best'`
  * counting that pane's drawn path vertices and marker centres inside the
  * frame. One that cannot sit in the frame goes below the last pane's x label
- * and grows the height by what it needs (`grown` true). Its labels join
+ * and grows the height by what it needs (`grown` and `grownFor.labels` true). Its labels join
  * `texts` with `role: 'legend'`, its box is `legendBox`, and it is drawn last,
  * over the panes.
  */
@@ -470,8 +473,8 @@ export function printFigureSvg(input: PrintFigureInput): PrintFigure {
   const gaps = PANE_GAP_PT * (shares.length - 1);
   let dataH = H0 - m.top - m.bottom - gaps;
   const need = Math.max(...measured.map((p, i) => labelNeed(p) / shares[i]));
-  let grown = need > dataH;
-  if (grown) dataH = need;
+  const grownFor = { labels: need > dataH, legend: false };
+  if (grownFor.labels) dataH = need;
   let H = dataH + gaps + m.top + m.bottom;
 
   const frames: PtBox[] = [];
@@ -495,7 +498,7 @@ export function printFigureSvg(input: PrintFigureInput): PrintFigure {
     })
     : null;
   if (legend) {
-    if (legend.extraHeightPt > 0) { H += legend.extraHeightPt; grown = true; }
+    if (legend.extraHeightPt > 0) { H += legend.extraHeightPt; grownFor.legend = true; }
     texts.push(...legend.texts);
   }
 
@@ -505,5 +508,5 @@ export function printFigureSvg(input: PrintFigureInput): PrintFigure {
     + outs.map((o) => o.svg).join('')
     + (legend?.svg ?? '')
     + '</svg>';
-  return { svg, widthPt: W, heightPt: H, grown, texts, frames, legendBox: legend?.box ?? null };
+  return { svg, widthPt: W, heightPt: H, grown: grownFor.labels || grownFor.legend, grownFor, texts, frames, legendBox: legend?.box ?? null };
 }

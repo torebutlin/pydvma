@@ -1,7 +1,7 @@
 // figureSave.ts — what Save Figure writes, shared by the top bar's Save Figure
 // and the Export stage card (both run App's `saveFigure`).
 //
-// The choices (PNG / PDF, background) live in a store rather than in the
+// The choices (PNG / PDF, background, width) live in a store rather than in the
 // Export card: the card unmounts whenever another stage is active, and the
 // top bar's button must save with what the card last showed. The naming rules
 // are pure functions so they carry the unit tests.
@@ -44,13 +44,18 @@ export function clampFigureWidth(v: unknown): number {
 
 /**
  * Sentences for the toast after a save: `grown` when the layout was made
- * taller to fit its labels at 10 pt, `glyphs` when a PDF is being written and
+ * taller, naming why from `grownFor` (its labels at 10 pt, a legend below the
+ * axes, or both; null when it did not grow), `glyphs` when a PDF is being written and
  * its embedded font lacks some characters in the figure (null otherwise).
  */
 export function figureNotes(
-  fig: Pick<PrintFigure, 'grown' | 'texts'>, formats: readonly FigureFormat[],
+  fig: Pick<PrintFigure, 'grownFor' | 'texts'>, formats: readonly FigureFormat[],
 ): { grown: string | null; glyphs: string | null } {
-  const grown = fig.grown ? 'laid out taller than its usual shape so the labels fit at 10 pt' : null;
+  const { labels, legend } = fig.grownFor;
+  const base = 'laid out taller than its usual shape';
+  const grown = labels && legend ? `${base} so the labels fit at 10 pt and the legend fits below the axes`
+    : labels ? `${base} so the labels fit at 10 pt`
+    : legend ? `${base} to fit the legend below the axes` : null;
   let glyphs: string | null = null;
   if (formats.includes('pdf')) {
     const missing = missingGlyphs(fig.texts.map((t) => t.text));

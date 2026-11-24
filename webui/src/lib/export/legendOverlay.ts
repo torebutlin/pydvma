@@ -20,7 +20,8 @@
  * canvas is shortened with a trailing `…`.
  *
  * Restyle contract (`figure.ts`'s `prepareSvg`): the card is a
- * `data-role="plot-bg"` rect carrying `PRINT_CHROME.bg` and `PRINT_CHROME.card`
+ * `data-role="legend-bg"` rect (its own role, so a transparent canvas leaves its
+ * white fill alone while dark mode recolours it) carrying `PRINT_CHROME.bg` and `PRINT_CHROME.card`
  * inline, the labels are `data-role="axis"` text in `PRINT_CHROME.ink`, and the
  * swatches carry no data-role, so data colours pass through every background
  * mode untouched. Faded rows (swatch and label) sit in a group at 0.55 opacity.
@@ -119,7 +120,7 @@ interface Columns { per: number; colW: number[]; w: number; h: number }
  * under it. A label wider than the canvas less its edges, a swatch, a gap and
  * two paddings is shortened, character by character, with a trailing `…`.
  *
- * Markup: card `<rect data-role="plot-bg">` filled `#ffffff` at 0.92 opacity
+ * Markup: card `<rect data-role="legend-bg">` filled `#ffffff` at 0.92 opacity
  * with a 0.5 pt `#c5cad3` border and 2 pt corners; labels `<text
  * data-role="axis" class="legend">` at 9 pt in `#1d2027`; a line swatch
  * (`line`, `dash`, `xline`) is a 1.6 em line stroked 1.6 pt (`dash` 2.4/1.8
@@ -233,7 +234,7 @@ function drawCard(
   entries: readonly PrintLegendEntry[], labels: readonly string[], widths: readonly number[], box: PtBox,
   c: Columns, sw: number, gap: number, pad: number, row: number, cgap: number,
 ): LegendLayout {
-  const parts = [`<g class="legend"><rect data-role="plot-bg" x="${u(box.x)}" y="${u(box.y)}" width="${u(box.w)}" `
+  const parts = [`<g class="legend"><rect data-role="legend-bg" x="${u(box.x)}" y="${u(box.y)}" width="${u(box.w)}" `
     + `height="${u(box.h)}" fill="${PRINT_CHROME.bg}" fill-opacity="${opa(CARD_FILL_OPACITY)}" `
     + `stroke="${PRINT_CHROME.card}" stroke-width="${sty(CARD_STROKE_PT)}" rx="${sty(CARD_RADIUS_PT)}"/>`];
   const texts: PrintText[] = [];

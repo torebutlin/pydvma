@@ -62,7 +62,7 @@ test('the explicit choice persists across a reload (wins over the OS default)', 
   await expect(page.getByTestId('theme-toggle')).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('exported plot SVG is byte-identical across themes (export is theme-independent)', async ({
+test('the plot SVG source is byte-identical across themes (inline chrome is theme-independent)', async ({
   page,
 }) => {
   await page.goto('/?fixture=1');
@@ -84,11 +84,11 @@ test('exported plot SVG is byte-identical across themes (export is theme-indepen
     .locator('.plot-bg')
     .evaluate((el) => getComputedStyle(el).fill);
 
-  // Serialisation (inline CHROME hexes + data) is unchanged: exports match.
+  // Serialisation (inline CHROME hexes + data) is unchanged by the theme.
   expect(darkSvg).toBe(lightSvg);
   // …but the ON-SCREEN plot-bg actually recoloured for dark.
   expect(darkBg).not.toBe(lightBg);
-  // The inline attribute the exporter reads stayed the fixed light hex.
+  // The inline chrome attribute stayed the fixed light hex.
   expect(lightSvg).toContain('fill="#ffffff"');
 });
 

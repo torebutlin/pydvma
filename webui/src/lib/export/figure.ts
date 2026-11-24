@@ -3,8 +3,8 @@
 // with the figure font embedded, on a white, transparent or dark background.
 //
 // The print SVG is self-contained: its background rect is
-// `data-role="plot-bg"`, every gridline, frame and text is `data-role="axis"`,
-// and each carries its chrome hex and font inline. `prepareSvg` restyles it for
+// `data-role="plot-bg"`, the legend card is `data-role="legend-bg"`, every
+// gridline, frame and text is `data-role="axis"`, and each carries its chrome hex and font inline. `prepareSvg` restyles it for
 // the chosen background as a PURE string operation (unit-tested); the PNG and
 // PDF writers are browser-only (canvas / jsPDF + svg2pdf.js) and are proven by
 // the e2e and by eye, not by node tests.
@@ -67,8 +67,8 @@ export const DARK_MAP: Readonly<Record<string, string>> = {
 export const DARK_BG = DARK_MAP[CHROME.bg];
 
 /**
- * Rewrite ONLY the opening tags that carry a `data-role="axis"` or
- * `data-role="plot-bg"` attribute, applying `fn` to each such tag's text.
+ * Rewrite ONLY the opening tags that carry a `data-role="axis"`,
+ * `data-role="plot-bg"` or `data-role="legend-bg"` attribute, applying `fn` to each such tag's text.
  * Elements without a data-role (the data `<path>`s and markers, <defs>, <g>,
  * a sonogram's `<image>`) pass through untouched — that is what keeps data
  * line colours safe. Operates on the serialised string, not the DOM, so it
@@ -77,7 +77,7 @@ export const DARK_BG = DARK_MAP[CHROME.bg];
 function mapRoleTags(svgText: string, fn: (tag: string) => string): string {
   // Match a single element's opening tag: `<name ...>` (non-greedy, no '>').
   return svgText.replace(/<[a-zA-Z][^>]*>/g, (tag) =>
-    /data-role="(axis|plot-bg)"/.test(tag) ? fn(tag) : tag,
+    /data-role="(axis|plot-bg|legend-bg)"/.test(tag) ? fn(tag) : tag,
   );
 }
 
@@ -86,7 +86,8 @@ function mapRoleTags(svgText: string, fn: (tag: string) => string): string {
  *
  *   'white'       — returned unchanged (the figure as drawn).
  *   'transparent' — the plot-bg rect's fill → "none" (page/checkerboard shows
- *                   through); ALL axis chrome and the data lines are untouched.
+ *                   through); ALL axis chrome, the legend card (keeps its white
+ *                   fill, so its text stays legible) and the data lines are untouched.
  *   'dark'        — the plot-bg fill → #1b2130 AND every axis-chrome hex is
  *                   swapped via DARK_MAP (gridlines, frame, text, legend card);
  *                   scoped to data-role elements so DATA-LINE strokes are

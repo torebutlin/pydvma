@@ -615,9 +615,9 @@
           <!-- Transparent capture layer over the data area; pointer
                gestures are measured relative to this rect's origin.
                fill="transparent" is INLINE (not just scoped CSS): it is
-               the last-painted element over the data, so in a standalone
-               export SVG — where the scoped CSS is gone — a missing fill
-               would default to opaque BLACK and hide the whole plot. -->
+               the last-painted element over the data, so wherever the
+               SVG is read without the scoped CSS a missing fill would
+               default to opaque BLACK and hide the whole plot. -->
           <rect
             class="capture"
             data-role="capture"

@@ -51,7 +51,7 @@ describe('printFigureSvg, one pane', () => {
   it('a default figure is 160 mm wide at 16:9 and not grown', () => {
     const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 160 });
     expect(f.widthPt).toBeCloseTo(453.54, 2); expect(f.heightPt).toBeCloseTo(453.54 * 9 / 16, 2);
-    expect(f.grown).toBe(false);
+    expect(f.grown).toBe(false); expect(f.grownFor).toEqual({ labels: false, legend: false });
     expect(f.svg).toMatch(/^<svg[^>]* width="453\.54pt" height="255\.12pt" viewBox="0 0 1814\.2 1020\.5"/);
   });
   it('Nyquist is 1:1 with a square frame', () => {
@@ -84,7 +84,7 @@ describe('printFigureSvg, one pane', () => {
   it('a label too long for the plot grows the height, never the type', () => {
     const long = 'Power spectrum ((m/s²)², A-weighted, dB) re 1 (m/s²)² per band, averaged';
     const f = printFigureSvg({ panes: [{ model: tfModel({ yLabel: long }) }], kind: 'default', widthMm: 90 });
-    expect(f.grown).toBe(true);
+    expect(f.grown).toBe(true); expect(f.grownFor).toEqual({ labels: true, legend: false });
     expect(f.heightPt).toBeGreaterThan(f.widthPt * 9 / 16);
     const lab = f.texts.find((t) => t.text === long)!;
     expect(lab.box.h).toBeLessThanOrEqual(f.frames[0].h + 0.01);
@@ -191,7 +191,14 @@ describe('printFigureSvg, legend', () => {
     const entries = Array.from({ length: 30 }, (_, i) => ({ label: `mode ${i}, Qn = 100`, color: '#2563eb', style: 'xline' as const, faded: false }));
     const f = printFigureSvg({ panes: [{ model: tfModel() }], kind: 'default', widthMm: 90, legend: { entries, placement: { kind: 'best' } } });
     expect(f.legendBox!.below).toBe(true); expect(f.grown).toBe(true); inside(f);
+    expect(f.grownFor).toEqual({ labels: false, legend: true });
     expect(f.legendBox!.y + f.legendBox!.h).toBeLessThanOrEqual(f.heightPt + 0.01);
+  });
+  it('a long label and a legend below the axes set both reasons', () => {
+    const long = 'Power spectrum ((m/s²)², A-weighted, dB) re 1 (m/s²)² per band, averaged';
+    const entries = Array.from({ length: 30 }, (_, i) => ({ label: `mode ${i}, Qn = 100`, color: '#2563eb', style: 'xline' as const, faded: false }));
+    const f = printFigureSvg({ panes: [{ model: tfModel({ yLabel: long }) }], kind: 'default', widthMm: 90, legend: { entries, placement: { kind: 'best' } } });
+    expect(f.grownFor).toEqual({ labels: true, legend: true }); expect(f.grown).toBe(true);
   });
   it('the Bode legend sits in the magnitude pane', () => {
     const f = printFigureSvg({ panes: [{ model: tfModel() }, { model: phaseModel() }], kind: 'bode', widthMm: 160,

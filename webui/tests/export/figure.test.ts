@@ -127,3 +127,14 @@ test('withEmbeddedFont puts an @font-face for the figure family right after the 
 test('figureBytes refuses an unknown format', async () => {
   await expect(figureBytes({} as never, 'gif' as never, 'white')).rejects.toThrow(/format/);
 });
+
+test('the legend card keeps its white fill when the canvas is transparent, and is recoloured in dark', () => {
+  const card = '<rect data-role="legend-bg" x="1" y="1" width="50" height="20" fill="#ffffff" fill-opacity="0.92" stroke="#c5cad3"/>';
+  const fig = svg.replace('</svg>', `${card}</svg>`);
+  const t = prepareSvg(fig, 'transparent');
+  expect(t).toMatch(/data-role="plot-bg"[^>]*fill="none"/);
+  expect(t).toMatch(/data-role="legend-bg"[^>]*fill="#ffffff"/);
+  const d = prepareSvg(fig, 'dark');
+  expect(d).toMatch(/data-role="legend-bg"[^>]*fill="#1b2130"/);
+  expect(d).not.toMatch(/data-role="legend-bg"[^>]*"#c5cad3"/i);
+});

@@ -179,13 +179,14 @@
     }
     saving = true;
     const saved: string[] = [];
+    const written: FigureFormat[] = [];
     let failing: FigureFormat | null = null;
     try {
       const width = clampFigureWidth(opts.widthMm);
       const input = id === 'spectrum' ? (dmp.peaks && dampingSpectrumFigure(dmp.peaks, width))
         : id === 'decay' ? (dmp.peaks && dampingDecayFigure(dmp.peaks, width))
         : (dmp.bands && dampingEdcFigure(dmp.bands, width));
-      if (!input) return;
+      if (!input) { notify('Nothing to save in this chart yet.', 'info'); return; }
       const fig = printFigureSvg(input);
       const stampNow = stamp();
       for (const format of formats) {
@@ -194,9 +195,10 @@
         const where = await onsavefile(name, await figureBytes(fig, format, opts.bg));
         if (where === null) break;   // the user cancelled the save: skip the rest
         saved.push(where ?? name);
+        written.push(format);
       }
       if (saved.length) {
-        const notes = figureNotes(fig, formats);
+        const notes = figureNotes(fig, written);
         notify(`Saved ${saved.join(' and ')}${notes.grown ? `, ${notes.grown}` : ''}`, 'success');
         if (notes.glyphs) notify(notes.glyphs, 'info');
       }

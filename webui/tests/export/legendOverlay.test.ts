@@ -27,7 +27,7 @@ describe('layoutPrintLegend', () => {
       expect(l.box.below).toBe(false);
     }
   });
-  it('outside-right sits right of the frame and inside the canvas', () => {
+  it('outside-right overhangs the right edge of the frame and stays inside the canvas', () => {
     const l = layoutPrintLegend({ legend: { entries: [entry('a')], placement: { kind: 'position', x: 1.02, y: 0.02 } }, frame, canvas, belowTopPt: 240, points: [] })!;
     expect(l.box.x + l.box.w).toBeGreaterThan(frame.x + frame.w);
     expect(l.box.x + l.box.w).toBeLessThanOrEqual(canvas.w);
@@ -41,7 +41,7 @@ describe('layoutPrintLegend', () => {
   });
   it('follows the restyle contract and escapes labels', () => {
     const svg = layoutPrintLegend({ legend: { entries: [entry('a<b & c')], placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame, canvas, belowTopPt: 240, points: [] })!.svg;
-    expect(svg).toMatch(/<rect data-role="plot-bg"[^>]*fill="#ffffff"[^>]*stroke="#c5cad3"/);
+    expect(svg).toMatch(/<rect data-role="legend-bg"[^>]*fill="#ffffff"[^>]*stroke="#c5cad3"/);
     expect(svg).toMatch(/<text data-role="axis"[^>]*font-size="36"[^>]*fill="#1d2027"/);
     expect(svg).toContain('a&lt;b &amp; c');
   });
@@ -49,7 +49,7 @@ describe('layoutPrintLegend', () => {
     const many = Array.from({ length: 40 }, (_, i) => entry(`set ${i} · ch_1/ch_0`));
     const l = layoutPrintLegend({ legend: { entries: many, placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame: { ...frame, h: 80 }, canvas, belowTopPt: 240, points: [] })!;
     expect(l.box.below).toBe(true); expect(l.box.y).toBeGreaterThanOrEqual(240);
-    expect(l.extraHeightPt).toBeGreaterThan(0); expect(l.svg).not.toContain('data-role="plot-bg"');
+    expect(l.extraHeightPt).toBeGreaterThan(0); expect(l.svg).not.toContain('data-role="legend-bg"');
   });
   it('a card too wide in its wrap columns steps down to fewer columns before going below', () => {
     const ents = Array.from({ length: 12 }, (_, i) => entry(`run ${i} · a long descriptive name for this measurement · ch_1/ch_0`));
@@ -62,7 +62,7 @@ describe('layoutPrintLegend', () => {
     expect(l.box.below).toBe(false);
     expect(l.box.h).toBeCloseTo(2 * 0.45 * 9 + 12 * 1.25 * 9, 6);    // one column of 12 rows
     expect(l.box.w).toBeLessThanOrEqual(maxW);
-    expect(l.svg).toContain('data-role="plot-bg"');
+    expect(l.svg).toContain('data-role="legend-bg"');
   });
   it('a card too wide and too tall at every column count still goes below', () => {
     const ents = Array.from({ length: 12 }, (_, i) => entry(`run ${i} · a long descriptive name for this measurement · ch_1/ch_0`));
