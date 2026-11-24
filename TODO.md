@@ -646,6 +646,19 @@ was added 2026-09-29.
   recon/refine/mute recomputes); return local slices from those ops if
   the toggle should survive a mute.
 
+### Publication figure follow-ups (2026-11-24)
+
+- Firefox: the PNG's embedded-font draw is unverified (Firefox is not installed on the Mac); Chromium and Safari 27.2 are verified.
+- x tick numbers collide below ~60 mm (40 mm: 200|400 etc.) because print keeps the screen's ticks; none at the 90/140/160/190 presets.
+- A large legend below the axes grows the figure a lot at narrow widths (30 rows at 90 mm is about 255 x 484 pt): columns fit the frame width, per the design.
+- Dense time-data PNGs are about 1 MB (transparent 1.13 MB) at 600 dpi.
+- Characters the font lacks are measured at 0.5 em, so CJK set names can overrun the card or canvas in the PNG.
+- No canvas-size guard: a 300 mm Nyquist is 7087 x 7087 px (iPad Safari's ~16.7 Mpx limit would give "toBlob returned null").
+- Vestigial inline CHROME hexes in PlotSurface/DampingPanel and their DARK_MAP entries are no longer used by any figure: remove them or keep them deliberately.
+- Renderer hardening: `printFigureSvg` does not validate `widthMm` (callers clamp); a non-finite legend fraction writes NaN (fall back to SE); the grow rule compares against the slot for square panes; the bottom margin counts the hidden Bode top-pane x label; Bode panes' edge y ticks can touch in the 9 pt gap; 'best' counts vertices, not segments; points are collected for every pane though only pane 0 is used.
+- Test gaps: marker cx/cy vs path vertices; x-label clamp and end-tick rule; R9 below-legend numbers; columns-keep-a-card; faded label inside its group; figureBytes dispatch; viewFigure all-off legend and sono-without-image; width blur-clamp/preset UI; legend e2e beyond a left-margin drag and Time-view presets; min-width overflow path.
+- Small cleanups: OFL.txt header and the subset script name a macOS system path; design.md's "~150 per inch" should read 288; the printFigureSvg docstring repeats PRINT_CHROME hexes; withEmbeddedFont silently no-ops without a root; img.decode() rejection message; clampFigureWidth maps +-Infinity to 160; the width note/preset buttons lack aria wiring; escAttr per legend row.
+
 ## Backlog — hardware, acquisition & the next PC session
 
 - **Hardware lessons learnt** are consolidated in
