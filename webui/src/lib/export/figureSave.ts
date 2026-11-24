@@ -7,6 +7,8 @@
 // are pure functions so they carry the unit tests.
 import { writable } from 'svelte/store';
 import type { BackgroundMode } from './figure';
+import { missingGlyphs } from './figureFont';
+import type { PrintFigure } from './printFigure';
 
 /** A figure file format. */
 export type FigureFormat = 'png' | 'pdf';
@@ -16,10 +18,48 @@ export interface FigureOptions {
   png: boolean;
   pdf: boolean;
   bg: BackgroundMode;
+  /** Printed width of the figure in millimetres (labels print at 10 pt at this width). */
+  widthMm: number;
 }
 
-/** The figure choices for this session (not persisted): PNG on white to start. */
-export const figureOptions = writable<FigureOptions>({ png: true, pdf: false, bg: 'white' });
+/** Default printed figure width in millimetres. */
+export const DEFAULT_FIGURE_WIDTH_MM = 160;
+/** Quick-pick printed widths (mm) offered beside the width field. */
+export const FIGURE_WIDTH_PRESETS = [90, 140, 160, 190] as const;
+/** The printed widths (mm) a figure may take: [min, max]. */
+export const FIGURE_WIDTH_RANGE = [40, 300] as const;
+
+/** The figure choices for this session (not persisted): PNG on white, 160 mm, to start. */
+export const figureOptions = writable<FigureOptions>({
+  png: true, pdf: false, bg: 'white', widthMm: DEFAULT_FIGURE_WIDTH_MM,
+});
+
+/** A typed width as a number of mm within `FIGURE_WIDTH_RANGE`; anything non-numeric gives the 160 mm default. */
+export function clampFigureWidth(v: unknown): number {
+  if (v === '' || v === null || v === undefined) return DEFAULT_FIGURE_WIDTH_MM;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DEFAULT_FIGURE_WIDTH_MM;
+  return Math.min(FIGURE_WIDTH_RANGE[1], Math.max(FIGURE_WIDTH_RANGE[0], n));
+}
+
+/**
+ * Sentences for the toast after a save: `grown` when the layout was made
+ * taller to fit its labels at 10 pt, `glyphs` when a PDF is being written and
+ * its embedded font lacks some characters in the figure (null otherwise).
+ */
+export function figureNotes(
+  fig: Pick<PrintFigure, 'grown' | 'texts'>, formats: readonly FigureFormat[],
+): { grown: string | null; glyphs: string | null } {
+  const grown = fig.grown ? 'laid out taller than its usual shape so the labels fit at 10 pt' : null;
+  let glyphs: string | null = null;
+  if (formats.includes('pdf')) {
+    const missing = missingGlyphs(fig.texts.map((t) => t.text));
+    if (missing.length) {
+      glyphs = `The PDF can't draw ${missing.join(' ')}: those characters print as boxes there. The PNG shows them.`;
+    }
+  }
+  return { grown, glyphs };
+}
 
 /** The extensions a figure name may carry; the served Save dialog keeps either as typed. */
 export const FIGURE_EXTENSIONS = ['.png', '.pdf'];

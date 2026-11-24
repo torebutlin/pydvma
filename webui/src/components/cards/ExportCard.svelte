@@ -12,7 +12,9 @@
    *     silent two-for-one). The choices live in the shared `figureOptions`
    *     store (the top bar's Save Figure uses them too, and this card
    *     unmounts with its stage); the write is App's `saveFigure`
-   *     (`onsavefigure`), handed this card's filename. The restyle +
+   *     (`onsavefigure`), handed this card's filename. A width field (mm,
+   *     40-300, default 160, quick picks 90/140/160/190) sets the printed
+   *     width the figure is laid out for; it is clamped on blur. The restyle +
    *     rasterise / vectorise lives in src/lib/export/figure.ts.
    *   - Autosave — a toggle bound to the app's `autosaveEnabled` $state
    *     (threaded down as a bindable prop). This is where Task 13a's
@@ -32,7 +34,9 @@
    * measurements. The pick is per-invocation and starts all-ticked; it is
    * never derived from what is visible on the plot.
    */
-  import { defaultFigureName, figureOptions } from '../../lib/export/figureSave';
+  import {
+    clampFigureWidth, defaultFigureName, FIGURE_WIDTH_PRESETS, FIGURE_WIDTH_RANGE, figureOptions,
+  } from '../../lib/export/figureSave';
   import type { ChoosableSet, ExportFormat, Exporter } from '../../lib/export/data';
   import ChooseSetsPopover from '../ChooseSetsPopover.svelte';
   import { cancelAutosave } from '../../lib/files/autosave';
@@ -274,6 +278,18 @@
           <label class="chk"><input type="checkbox" bind:checked={$figureOptions.png} aria-label="PNG" /> PNG</label>
           <label class="chk"><input type="checkbox" bind:checked={$figureOptions.pdf} aria-label="PDF" /> PDF</label>
         </div>
+      </div>
+      <div class="grp">
+        <span class="grp-lab">figure width</span>
+        <div class="grp-ctl">
+          <input type="number" min={FIGURE_WIDTH_RANGE[0]} max={FIGURE_WIDTH_RANGE[1]} step="1" style="width:64px"
+            data-testid="fig-width" aria-label="figure width (mm)" bind:value={$figureOptions.widthMm}
+            onblur={() => ($figureOptions.widthMm = clampFigureWidth($figureOptions.widthMm))} /> mm
+          {#each FIGURE_WIDTH_PRESETS as w (w)}
+            <button class="btn" data-testid={`fig-width-${w}`} onclick={() => ($figureOptions.widthMm = w)}>{w}</button>
+          {/each}
+        </div>
+        <span class="grp-lab">Laid out for this printed width: labels print at 10 pt.</span>
       </div>
       <div class="grp">
         <span class="grp-lab">background</span>

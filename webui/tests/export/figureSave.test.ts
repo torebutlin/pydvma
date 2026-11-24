@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import { get } from 'svelte/store';
 import {
-  defaultFigureName, figureFormats, figureOptions, figureStem, figureTargets,
+  clampFigureWidth, defaultFigureName, figureFormats, figureNotes, figureOptions, figureStem, figureTargets,
 } from '../../src/lib/export/figureSave';
 
 test('the default figure name is stamped from the clock, without an extension', () => {
@@ -9,14 +9,14 @@ test('the default figure name is stamped from the clock, without an extension', 
 });
 
 test('the shared figure options start as PNG on white', () => {
-  expect(get(figureOptions)).toEqual({ png: true, pdf: false, bg: 'white' });
+  expect(get(figureOptions)).toEqual({ png: true, pdf: false, bg: 'white', widthMm: 160 });
 });
 
 test('figureFormats lists the ticked formats, PNG first', () => {
-  expect(figureFormats({ png: true, pdf: false, bg: 'white' })).toEqual(['png']);
-  expect(figureFormats({ png: false, pdf: true, bg: 'white' })).toEqual(['pdf']);
-  expect(figureFormats({ png: true, pdf: true, bg: 'dark' })).toEqual(['png', 'pdf']);
-  expect(figureFormats({ png: false, pdf: false, bg: 'white' })).toEqual([]);
+  expect(figureFormats({ png: true, pdf: false, bg: 'white', widthMm: 160 })).toEqual(['png']);
+  expect(figureFormats({ png: false, pdf: true, bg: 'white', widthMm: 160 })).toEqual(['pdf']);
+  expect(figureFormats({ png: true, pdf: true, bg: 'dark', widthMm: 160 })).toEqual(['png', 'pdf']);
+  expect(figureFormats({ png: false, pdf: false, bg: 'white', widthMm: 160 })).toEqual([]);
 });
 
 test('figureStem drops a trailing .png / .pdf in any case, and nothing else', () => {
@@ -47,4 +47,20 @@ test('both formats: one name, two files side by side', () => {
     { name: 'beam.png', format: 'png' },
     { name: 'beam.pdf', format: 'pdf' },
   ]);
+});
+
+test('clampFigureWidth keeps the width in 40-300 mm and falls back to 160', () => {
+  expect(clampFigureWidth(90)).toBe(90); expect(clampFigureWidth('120')).toBe(120);
+  expect(clampFigureWidth(20)).toBe(40); expect(clampFigureWidth(500)).toBe(300);
+  expect(clampFigureWidth(NaN)).toBe(160); expect(clampFigureWidth('')).toBe(160); expect(clampFigureWidth(undefined)).toBe(160);
+});
+
+test('figureNotes says when a figure grew, and names glyphs the PDF lacks only when writing a PDF', () => {
+  const t = (text: string) => ({ text, role: 'legend' as const, box: { x: 0, y: 0, w: 1, h: 1 } });
+  expect(figureNotes({ grown: true, texts: [] }, ['png']).grown)
+    .toBe('laid out taller than its usual shape so the labels fit at 10 pt');
+  expect(figureNotes({ grown: false, texts: [t('漢 set')] }, ['png']).glyphs).toBeNull();
+  expect(figureNotes({ grown: false, texts: [t('漢 set')] }, ['png', 'pdf']).glyphs)
+    .toBe("The PDF can't draw 漢: those characters print as boxes there. The PNG shows them.");
+  expect(figureNotes({ grown: false, texts: [t('ok')] }, ['pdf'])).toEqual({ grown: null, glyphs: null });
 });
