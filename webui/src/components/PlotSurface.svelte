@@ -56,6 +56,11 @@
    * Visual treatment ported from dev/mockups/round2-bench.html:
    * margins L58/T16/B42, R18 (56 with a right axis), #eef0f4
    * gridlines, mono tick labels and muted axis labels.
+   *
+   * The data frame's position is published through the bindable `frame`
+   * prop (`FrameInsets`), so App can hand it to the Legend, whose
+   * fractions and corner presets refer to the axes frame rather than the
+   * whole surface (publication figures, 2026-11-24).
    */
   import { buildPlot, dataExtent, type PlotModel } from '../lib/plot/build';
   import { fmtTick } from '../lib/plot/scales';
@@ -63,7 +68,9 @@
   import { rubberBandToRange, clampToData, panBy, boxTouchesAxis, panTouchesAxis } from '../lib/plot/zoom';
   import { CHROME } from '../lib/plot/chrome';
   import type { ViewState } from '../lib/stores/viewstate';
+  import type { FrameInsets } from '../lib/plot/legendPos';
   import { get } from 'svelte/store';
+  import { untrack } from 'svelte';
 
   let {
     model,
@@ -74,6 +81,7 @@
     onAutoFit = undefined,
     extentOverride = undefined,
     priorRangeOverride = undefined,
+    frame = $bindable(),
   }: {
     model: PlotModel;
     /** Active drag tool; bind ZoomToolbar's `mode` to this. */
@@ -130,6 +138,16 @@
      * which everywhere else ARE the committed ones.
      */
     priorRangeOverride?: { x: [number, number] | null; y: [number, number] | null };
+    /**
+     * OUTPUT (bind it): where the data frame sits inside this surface, px
+     * from each of the surface's edges to the matching edge of the frame
+     * rect (`ox`, `oy`, `width − ox − pw`, `height − oy − ph`: margins
+     * L58/T16/B42, R18 or 56, plus Nyquist's centring offsets). App passes
+     * it to `Legend`, which lays its card out against the frame. Undefined
+     * until the surface has measured itself; a value passed in (a stale one
+     * from another view's surface) is replaced as soon as this one mounts.
+     */
+    frame?: FrameInsets;
   } = $props();
 
   /** Commit a gesture range to the override callback, else the default setRange. */
@@ -198,6 +216,21 @@
   const ph = $derived(model.squareAspect ? side : ih);
   const ox = $derived(ML + (model.squareAspect ? (iw - side) / 2 : 0));
   const oy = $derived(MT + (model.squareAspect ? (ih - side) / 2 : 0));
+
+  // Publish the frame's insets (the `frame` prop) whenever the layout moves.
+  // Only a real change is written, so a parent binding does not re-render on
+  // every effect run.
+  $effect(() => {
+    const next: FrameInsets | undefined = width > 0 && height > 0
+      ? { left: ox, top: oy, right: width - ox - pw, bottom: height - oy - ph }
+      : undefined;
+    const prev = untrack(() => frame);
+    const same = next && prev
+      ? next.left === prev.left && next.top === prev.top
+        && next.right === prev.right && next.bottom === prev.bottom
+      : next === prev;
+    if (!same) frame = next;
+  });
 
   // Local pan-preview range: while a pan gesture is live, the render
   // uses THIS instead of model.xRange/yRange so the plot tracks the
@@ -521,7 +554,13 @@
       <text data-role="axis" class="axlab" transform="translate(14 {oy + ph / 2}) rotate(-90)"
         text-anchor="middle" fill={CHROME.axis}>{model.yLabel}</text>
       {#if model.y2Label && built.y2Ticks.length > 0}
-        <text data-role="axis" class="axlab" transform="translate({width - 8} {oy + ph / 2}) rotate(90)"
+        <!-- rotate(90) turns the glyphs' ascent towards +x, so they run to the
+             RIGHT of the baseline: at width − 8 the 11.5 px label's ~9 px
+             ascent overran the SVG's right edge and was cropped. The baseline
+             sits at width − 13 = 4 px gap + that ascent, which keeps the
+             glyphs inside and still clear of the right-axis tick labels
+             (they start at ox + pw + 7 = width − 49 and are ~20 px wide). -->
+        <text data-role="axis" class="axlab" transform="translate({width - 13} {oy + ph / 2}) rotate(90)"
           text-anchor="middle" fill={CHROME.axis}>{model.y2Label}</text>
       {/if}
 

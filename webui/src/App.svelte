@@ -51,6 +51,7 @@
   import type { BandKind, Weighting } from './lib/analysis/acoustics';
   import { buildPlotModel, isAutoPowerMode, type FreqMode, type SetArrays, type VisibleLine } from './lib/plot/model';
   import { tfTransformEntries } from './lib/plot/tfChannels';
+  import type { FrameInsets } from './lib/plot/legendPos';
   import { csdPairEntries } from './lib/plot/csdChannels';
   import type { LegendEntry } from './lib/stores/selection';
   import { readable, get } from 'svelte/store';
@@ -1289,6 +1290,12 @@
    *  rows without the fit sets), else none. */
   const legendOverride = $derived(tfLegend ?? csdLegend ?? plainLegend);
 
+  /** The mounted main plot's axes-frame insets, bound out of PlotSurface and
+   *  handed to its Legend, so the legend's presets and fractions refer to the
+   *  frame. One shared value: only one of the Legend-bearing plot branches
+   *  (Nyquist, Bode magnitude, the plain plot) is mounted at a time. */
+  let plotFrame = $state<FrameInsets | undefined>();
+
   /**
    * Visible (on/fade) lines fed to the plot model, derived from the SAME
    * `viewEntries` the legend shows (off lines already omitted). For TF
@@ -1859,8 +1866,8 @@
                 navControl={navView} navOpen={navOpen} onnavtoggle={() => viewState.setNavigator(view, !navOpen)} />
             </div>
             <div class="plot-area">
-              <PlotSurface {model} {mode} {viewState} />
-              <Legend {selection} {viewState} entriesOverride={legendOverride} />
+              <PlotSurface {model} {mode} {viewState} bind:frame={plotFrame} />
+              <Legend {selection} {viewState} entriesOverride={legendOverride} frame={plotFrame} />
               {#if $activeStage === 'fit'}<FitChip {modal} {actions} {selection} />{/if}
             </div>
           </div>
@@ -1876,8 +1883,8 @@
           </div>
           {@render freqNav()}
           <div class="bode-pane">
-            <PlotSurface {model} {mode} {viewState} />
-            <Legend {selection} {viewState} entriesOverride={legendOverride} />
+            <PlotSurface {model} {mode} {viewState} bind:frame={plotFrame} />
+            <Legend {selection} {viewState} entriesOverride={legendOverride} frame={plotFrame} />
           </div>
           <div class="bode-pane">
             <!-- Phase pane: shares x, owns its y. Route gestures to phaseRange
@@ -1896,8 +1903,8 @@
           </div>
           {@render freqNav()}
           <div class="plot-area">
-            <PlotSurface {model} {mode} {viewState} />
-            <Legend {selection} {viewState} entriesOverride={legendOverride} />
+            <PlotSurface {model} {mode} {viewState} bind:frame={plotFrame} />
+            <Legend {selection} {viewState} entriesOverride={legendOverride} frame={plotFrame} />
             {#if $activeStage === 'fit'}<FitChip {modal} {actions} {selection} />{/if}
           </div>
         </div>

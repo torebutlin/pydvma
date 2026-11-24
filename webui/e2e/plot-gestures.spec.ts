@@ -420,11 +420,13 @@ test.describe('plot legend gestures', () => {
     const card = page.getByTestId('legend');
     await expect(page.getByTestId('legend-entry')).toHaveCount(69);
 
-    /** The card's box against its plot area (offsetParent), after a settle,
-     *  and whether its entry list scrolls. */
+    /** The card's box against its plot area, after a settle, and whether its
+     *  entry list scrolls. The card's offsetParent is the axes-frame box
+     *  inside the plot area, and a dragged card may sit over the margins,
+     *  so "inside" is judged against the frame box's own offsetParent. */
     const geometry = () => card.evaluate(async (el) => {
       await new Promise((r) => setTimeout(r, 300));
-      const plot = (el as HTMLElement).offsetParent!.getBoundingClientRect();
+      const plot = ((el as HTMLElement).offsetParent as HTMLElement).offsetParent!.getBoundingClientRect();
       const box = el.getBoundingClientRect();
       const body = el.querySelector('[data-testid="legend-body"]') as HTMLElement | null;
       return {
@@ -555,5 +557,49 @@ test.describe('plot legend gestures', () => {
     expectSame(r.held, r.dropped);
     r = await dragBy(-host.w * 0.4, 0);
     expectSame(r.held, r.dropped);
+  });
+
+  // Publication figures (2026-11-24): the legend's fractions refer to the
+  // axes frame, as in the printed figure. A corner preset sits inside the
+  // frame, clear of the tick labels; a free drag may still use the margins.
+  test('every corner preset keeps the legend inside the axes frame, clear of the tick labels', async ({ page }) => {
+    await openFixture(page);
+    const frame = (await page.getByTestId('plot-svg').locator('rect.frame').first().boundingBox())!;
+    for (const p of ['NE', 'NW', 'SW', 'SE']) {
+      await openPanel(page);
+      await page.getByTitle(`Move legend: ${p}`).click();
+      await page.mouse.move(6, 560);
+      const card = (await page.getByTestId('legend').boundingBox())!;
+      expect(card.x).toBeGreaterThanOrEqual(frame.x + 7);
+      expect(card.y).toBeGreaterThanOrEqual(frame.y + 7);
+      expect(card.x + card.width).toBeLessThanOrEqual(frame.x + frame.width - 7);
+      expect(card.y + card.height).toBeLessThanOrEqual(frame.y + frame.height - 7);
+      for (const t of await page.getByTestId('plot-svg').locator('text.tick').all()) {
+        const b = (await t.boundingBox())!;
+        const overlap = b.x < card.x + card.width && card.x < b.x + b.width && b.y < card.y + card.height && card.y < b.y + b.height;
+        expect(overlap).toBe(false);
+      }
+    }
+  });
+  test('a dragged legend may sit over the margins but stays inside the plot', async ({ page }) => {
+    await openFixture(page);
+    const svg = (await page.getByTestId('plot-svg').boundingBox())!;
+    const frame = (await page.getByTestId('plot-svg').locator('rect.frame').first().boundingBox())!;
+    const card = page.getByTestId('legend');
+    const b = (await card.boundingBox())!;
+    await page.mouse.move(b.x + 12, b.y + 12); await page.mouse.down();
+    await page.mouse.move(b.x + 20, b.y + 12, { steps: 2 });
+    await page.mouse.move(b.x + 12 - (b.x - svg.x) - 200, b.y + 12, { steps: 8 });   // far past the left edge
+    await page.mouse.up();
+    const after = (await card.boundingBox())!;
+    expect(after.x).toBeLessThan(frame.x);            // over the left margin
+    expect(after.x).toBeGreaterThanOrEqual(svg.x);    // but not off the plot
+  });
+  test('the coherence label sits inside the plot', async ({ page }) => {
+    await openFixture(page);
+    await page.getByRole('navigation', { name: 'stages' }).getByRole('button', { name: 'TF' }).click();
+    const svg = (await page.getByTestId('plot-svg').boundingBox())!;
+    const lab = (await page.getByTestId('plot-svg').locator('text.axlab', { hasText: 'coherence' }).boundingBox())!;
+    expect(lab.x + lab.width).toBeLessThanOrEqual(svg.x + svg.width);
   });
 });

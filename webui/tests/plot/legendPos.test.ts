@@ -38,3 +38,13 @@ test('clampLegend leaves an in-range point untouched', () => {
   expect(clampLegend({ x: 0.5, y: 0.5 })).toEqual({ x: 0.5, y: 0.5 });
   expect(clampLegend({ x: 1.02, y: 0.02 })).toEqual({ x: 1.02, y: 0.02 });
 });
+
+test('clampLegend takes wider limits: a drag over the margins keeps its fraction', () => {
+  // The screen legend clamps a drag to the whole plot host, i.e. the frame
+  // plus its margins as fractions of the frame (Legend.svelte's commit).
+  const lim = { x: [-0.1, 1.02] as [number, number], y: [-0.05, 1.2] as [number, number] };
+  expect(clampLegend({ x: -0.04, y: 1.1 }, lim)).toEqual({ x: -0.04, y: 1.1 });
+  expect(clampLegend({ x: -3, y: 9 }, lim)).toEqual({ x: -0.1, y: 1.2 });
+  // The default limits are unchanged.
+  expect(clampLegend({ x: -0.04, y: 1.1 })).toEqual({ x: 0, y: 1 });
+});

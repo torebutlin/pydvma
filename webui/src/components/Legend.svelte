@@ -16,11 +16,15 @@
    * component's lifetime (created once at app startup).
    *
    * Placement is FRACTIONAL (`legend.x` / `legend.y` in `[0, 1]`, spec
-   * convention, see `lib/plot/legendPos`). The card anchors to the
-   * right edge when `x > 0.5` and to the bottom when `y > 0.5` so a
-   * corner preset pins the nearest corner of the card to that corner
-   * of the plot (matplotlib feel). The whole card is hidden when
-   * `legend.visible === false`.
+   * convention, see `lib/plot/legendPos`) ACROSS THE AXES FRAME, as in the
+   * printed figure: the card sits in a box laid at PlotSurface's `frame`
+   * insets (`legend-frame`, pointer-events none so the plot underneath
+   * still takes gestures), which is the card's offsetParent, so every
+   * fraction, measure and drag below resolves against the frame. The card
+   * anchors to the right edge when `x > 0.5` and to the bottom when
+   * `y > 0.5` so a corner preset pins the nearest corner of the card to
+   * that corner of the axes (matplotlib feel). The whole card is hidden
+   * when `legend.visible === false`.
    *
    * TWO DISPLAY MODES (post-release feedback: "many lines" legends):
    *
@@ -58,20 +62,27 @@
    * NEVER OUTGROWS THE PLOT (4C6 lab, 2026-11: a file with 23 sets and
    * their fit pseudo-sets gave ~69 rows, and in a short plot the card grew
    * up past the plot over the frequency navigator and hid its controls;
-   * the zoom toolbar's strip stacks above it). The card is a flex column capped at the plot area's height
-   * (its offsetParent); its rows or dots scroll inside it, the list taking
-   * touch pans only when it actually scrolls. Its measured size clamps its
-   * placement inside the plot area, 4 px clear of its edges (CSS `clamp()`
-   * against the host's own %, the size re-measured by a ResizeObserver on
-   * the card, its list and the host), so a plot resize, more lines or a
-   * mode switch pull it back into view. Only
-   * the `outside-right` preset may still overhang the right edge (by up to
-   * 5 %, `clampLegend`'s slack). The fraction stored in viewState is left
-   * as placed: the clamp is visual, so growing the plot back restores it.
+   * the zoom toolbar's strip stacks above it). The card is a flex column
+   * capped at the axes frame's height less 2 × INSET (its offsetParent);
+   * its rows or dots scroll inside it, the list taking touch pans only
+   * when it actually scrolls. Its measured size clamps its placement (CSS
+   * `clamp()` against the frame box's own %, the size re-measured by a
+   * ResizeObserver on the card, its list and the frame box), so a plot
+   * resize, more lines or a mode switch pull it back into view. WHERE it is
+   * clamped depends on where the position came from (publication figures,
+   * 2026-11-24: the SE preset used to sit on the corner tick labels):
+   * - a PRESET (`legend.preset` set, the default `se` included) stays inside
+   *   the axes frame, INSET px clear of its edges, so it never covers a tick
+   *   label; `outside-right` may overhang the frame's right edge by up to
+   *   RIGHT_SLACK (5 %, `clampLegend`'s slack) but stays inside the plot;
+   * - a DRAGGED position (`preset === null`) may sit over the margins but
+   *   stays inside the whole plot host, DRAG_INSET px clear of its edges.
+   * The fraction stored in viewState is left as placed: the clamp is
+   * visual, so growing the plot back restores it.
    */
   import type { LegendEntry, Selection } from '../lib/stores/selection';
   import type { ViewState } from '../lib/stores/viewstate';
-  import { clampLegend } from '../lib/plot/legendPos';
+  import { clampLegend, type FrameInsets } from '../lib/plot/legendPos';
   import { legendGrid, legendWrapColumns } from '../lib/plot/legendGrid';
   import { get, type Readable } from 'svelte/store';
   import { flushSync } from 'svelte';
@@ -80,6 +91,7 @@
     selection,
     viewState,
     entriesOverride,
+    frame,
   }: {
     selection: Selection;
     viewState: ViewState;
@@ -92,7 +104,18 @@
      * unchanged. Omitted (undefined) → the off-inclusive legend rows.
      */
     entriesOverride?: Readable<LegendEntry[]> | undefined;
+    /**
+     * Where the axes frame sits in the plot host (PlotSurface's bound
+     * `frame`, px from the host's edges). The card is laid out in a box at
+     * these insets, so its fractions and presets refer to the frame.
+     * Omitted → all zero: the box is the whole host.
+     */
+    frame?: FrameInsets;
   } = $props();
+
+  const NO_FRAME: FrameInsets = { left: 0, top: 0, right: 0, bottom: 0 };
+  /** The frame insets in use (absent → the whole host). */
+  const fr = $derived(frame ?? NO_FRAME);
 
   // Derived (not destructured) so the component tracks reassigned props.
   // An override store wins; otherwise the off-inclusive per-channel rows
@@ -145,29 +168,52 @@
   const placement = $derived.by(() => {
     const anchorRight = !dragging && legend.x > 0.5;
     const anchorBottom = !dragging && legend.y > 0.5;
-    // Each offset is clamped so the card's MEASURED box stays inside the
-    // host, INSET px clear of its edges: between `lo` and
-    // `100% − size − INSET` (`max()` keeps that bound at or above `lo`; the
-    // max-height/max-width caps make the card fit anyway). Only a
-    // right-anchored card may overhang the right edge (the outside-right
-    // preset). A left-anchored one gets no slack: an overhang would narrow
-    // its shrink-to-fit width, which would raise the bound, and so on.
-    const within = (pct: number, size: number, lo = `${INSET}px`) =>
-      `clamp(${lo}, ${pct * 100}%, max(${lo}, calc(100% - ${size + INSET}px)))`;
     return {
-      left: anchorRight ? 'auto' : within(legend.x, cardW),
-      right: anchorRight ? within(1 - legend.x, cardW, `${-RIGHT_SLACK * 100}%`) : 'auto',
-      top: anchorBottom ? 'auto' : within(legend.y, cardH),
-      bottom: anchorBottom ? within(1 - legend.y, cardH) : 'auto',
+      left: anchorRight ? 'auto' : offset('left', legend.x, cardW),
+      right: anchorRight ? offset('right', 1 - legend.x, cardW) : 'auto',
+      top: anchorBottom ? 'auto' : offset('top', legend.y, cardH),
+      bottom: anchorBottom ? offset('bottom', 1 - legend.y, cardH) : 'auto',
     };
   });
 
-  /** How far past the right edge a right-anchored card may sit (fraction
-   *  of the plot width): `clampLegend`'s slack for the outside-right preset. */
+  const OPPOSITE = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' } as const;
+
+  /**
+   * One CSS offset for the card's `side` edge: the fraction `pct` of the
+   * frame box, clamped so the card's MEASURED `size` stays inside its bounds
+   * (see the header), between `lo` and `hi` (`max()` keeps `hi` at or above
+   * `lo`; the max-height/max-width caps make the card fit anyway).
+   * - A preset: inside the frame box, INSET px clear (`lo` = INSET,
+   *   `hi` = 100% − size − INSET); `outside-right`'s right edge may go up to
+   *   RIGHT_SLACK past the frame's right edge, but not past the host's.
+   * - A dragged position (or a drag in progress): inside the whole host,
+   *   DRAG_INSET px clear. In the frame box's coordinates the host's edge on
+   *   `side` is `−fr[side]` px away and the far one `100% + fr[opposite]`.
+   * The card's width is max-content (see .legend), so an overhang past the
+   * frame box never narrows it, which would move the bound, and so on.
+   */
+  function offset(side: keyof typeof OPPOSITE, pct: number, size: number): string {
+    let lo: string, hi: string;
+    if (!legend.preset || dragging) {
+      lo = `${DRAG_INSET - fr[side]}px`;
+      hi = `calc(100% + ${fr[OPPOSITE[side]] - size - DRAG_INSET}px)`;
+    } else {
+      lo = side === 'right' && legend.preset === 'outside-right'
+        ? `max(${-RIGHT_SLACK * 100}%, ${DRAG_INSET - fr.right}px)` : `${INSET}px`;
+      hi = `calc(100% - ${size + INSET}px)`;
+    }
+    return `clamp(${lo}, ${pct * 100}%, max(${lo}, ${hi}))`;
+  }
+
+  /** How far past the frame's right edge the outside-right preset may sit
+   *  (fraction of the frame width): `clampLegend`'s slack. */
   const RIGHT_SLACK = 0.05;
-  /** The clamp's gap to the plot's edges, px: keep in lockstep with the
-   *  .legend max-height. Presets (2 %) sit further in on plots over 200 px. */
-  const INSET = 4;
+  /** A preset's gap to the axes frame's edges, px: keep in lockstep with
+   *  the .legend max-height. Presets (2 %) sit further in on frames over
+   *  400 px. */
+  const INSET = 8;
+  /** A dragged card's gap to the plot host's edges, px. */
+  const DRAG_INSET = 4;
 
   // ---- In-plot cap and clamp (see the header) ----
   let bodyEl: HTMLDivElement | undefined = $state();
@@ -266,14 +312,22 @@
   let rafId = 0;
   let pendingPos: { x: number; y: number } | null = null;
 
-  /** Host element = the card's positioned ancestor (the plot host). */
+  /** Host element = the card's positioned ancestor: the frame box (the
+   *  axes frame inside the plot host). */
   function hostOf(): HTMLElement | null {
     return card?.offsetParent as HTMLElement | null;
   }
 
-  /** Commit a fractional position, clamped, clearing any preset. */
+  /** Commit a fractional position, clearing any preset. It is clamped to the
+   *  whole plot host (the frame plus its margins, as fractions of the frame);
+   *  the px-exact clamp is `offset`'s. */
   function commit(pos: { x: number; y: number }) {
-    const c = clampLegend(pos);
+    const r = hostRect ?? hostOf()?.getBoundingClientRect();
+    const W = r && r.width > 0 ? r.width : 1, H = r && r.height > 0 ? r.height : 1;
+    const c = clampLegend(pos, {
+      x: [-fr.left / W, 1 + fr.right / W],
+      y: [-fr.top / H, 1 + fr.bottom / H],
+    });
     viewState.setLegend(get(viewState.active), { ...legend, x: c.x, y: c.y, preset: null });
   }
 
@@ -365,113 +419,136 @@
 </script>
 
 {#if legend.visible}
+  <!-- The frame box: laid at the axes frame's insets, it is the card's
+       offsetParent, so the card's fractions and clamps refer to the frame.
+       It takes no pointer events, so the plot underneath keeps its
+       gestures; the card takes them back. -->
   <div
-    bind:this={card}
-    class="legend"
-    class:dragging
-    class:compact={legend.compact}
-    class:scrolls
-    data-testid="legend"
-    style:left={placement.left}
-    style:right={placement.right}
-    style:top={placement.top}
-    style:bottom={placement.bottom}
-    style:max-width={cardMaxWidth}
-    role="group"
-    aria-label="Plot legend — drag to reposition"
-    onpointerdown={onPointerDown}
-    onpointermove={onPointerMove}
-    onpointerup={onPointerUp}
-    onpointercancel={onPointerCancel}
+    class="legend-frame"
+    data-testid="legend-frame"
+    style:left={`${fr.left}px`}
+    style:top={`${fr.top}px`}
+    style:right={`${fr.right}px`}
+    style:bottom={`${fr.bottom}px`}
   >
-    <!-- Mode toggle: hover-revealed corner button; absolute, so it sits
-         outside the row/dot flow. `pointer-events` gates with opacity so
-         the invisible button never swallows a click meant for a row. -->
-    <button
-      type="button"
-      class="mode-toggle"
-      data-testid="legend-compact-toggle"
-      title="Compact legend"
-      aria-pressed={legend.compact}
-      onclick={toggleCompact}
+    <div
+      bind:this={card}
+      class="legend"
+      class:dragging
+      class:compact={legend.compact}
+      class:scrolls
+      data-testid="legend"
+      style:left={placement.left}
+      style:right={placement.right}
+      style:top={placement.top}
+      style:bottom={placement.bottom}
+      style:max-width={cardMaxWidth}
+      role="group"
+      aria-label="Plot legend — drag to reposition"
+      onpointerdown={onPointerDown}
+      onpointermove={onPointerMove}
+      onpointerup={onPointerUp}
+      onpointercancel={onPointerCancel}
     >
-      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-        <circle cx="3" cy="3" r="1.6" fill="currentColor" />
-        <circle cx="7" cy="3" r="1.6" fill="currentColor" />
-        <circle cx="3" cy="7" r="1.6" fill="currentColor" />
-        <circle cx="7" cy="7" r="1.6" fill="currentColor" />
-      </svg>
-    </button>
-    <!-- The list scrolls inside the capped card (see the header). -->
-    <div class="legend-body" class:scrolls bind:this={bodyEl} data-testid="legend-body">
-    {#if legend.compact}
-      <!-- Compact: one dot per line; row = set, column = channel. -->
-      <div
-        bind:this={listEl}
-        class="dots"
-        data-testid="legend-dots"
-        style:grid-template-rows={`repeat(${Math.max(1, grid.nRows)}, auto)`}
-        style:grid-template-columns={`repeat(${Math.max(1, grid.nCols)}, auto)`}
+      <!-- Mode toggle: hover-revealed corner button; absolute, so it sits
+           outside the row/dot flow. `pointer-events` gates with opacity so
+           the invisible button never swallows a click meant for a row. -->
+      <button
+        type="button"
+        class="mode-toggle"
+        data-testid="legend-compact-toggle"
+        title="Compact legend"
+        aria-pressed={legend.compact}
+        onclick={toggleCompact}
       >
-        {#each grid.cells as c (`${c.setId}:${c.ch}`)}
-          <button
-            type="button"
-            class="dot"
-            class:fade={c.state === 'fade'}
-            class:off={c.state === 'off'}
-            style:grid-row={c.row + 1}
-            style:grid-column={c.col + 1}
-            data-testid="legend-dot"
-            title={c.label}
-            aria-label={c.label}
-            onclick={() => { if (!justDragged) selection.cycleLine(c.setId, c.ch); }}
-          >
-            <span
-              class="dot-fill"
-              style:border-color={c.color}
-              style:background={c.state === 'off' ? 'transparent' : c.color}
-            ></span>
-          </button>
-        {/each}
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <circle cx="3" cy="3" r="1.6" fill="currentColor" />
+          <circle cx="7" cy="3" r="1.6" fill="currentColor" />
+          <circle cx="3" cy="7" r="1.6" fill="currentColor" />
+          <circle cx="7" cy="7" r="1.6" fill="currentColor" />
+        </svg>
+      </button>
+      <!-- The list scrolls inside the capped card (see the header). -->
+      <div class="legend-body" class:scrolls bind:this={bodyEl} data-testid="legend-body">
+      {#if legend.compact}
+        <!-- Compact: one dot per line; row = set, column = channel. -->
+        <div
+          bind:this={listEl}
+          class="dots"
+          data-testid="legend-dots"
+          style:grid-template-rows={`repeat(${Math.max(1, grid.nRows)}, auto)`}
+          style:grid-template-columns={`repeat(${Math.max(1, grid.nCols)}, auto)`}
+        >
+          {#each grid.cells as c (`${c.setId}:${c.ch}`)}
+            <button
+              type="button"
+              class="dot"
+              class:fade={c.state === 'fade'}
+              class:off={c.state === 'off'}
+              style:grid-row={c.row + 1}
+              style:grid-column={c.col + 1}
+              data-testid="legend-dot"
+              title={c.label}
+              aria-label={c.label}
+              onclick={() => { if (!justDragged) selection.cycleLine(c.setId, c.ch); }}
+            >
+              <span
+                class="dot-fill"
+                style:border-color={c.color}
+                style:background={c.state === 'off' ? 'transparent' : c.color}
+              ></span>
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <!-- Full: labelled rows; >10 entries wrap into balanced columns
+             reading top-to-bottom then across (grid-auto-flow: column). -->
+        <div
+          bind:this={listEl}
+          class="rows"
+          class:multi={wrapCols > 1}
+          style:grid-template-rows={wrapCols > 1 ? `repeat(${wrapRows}, auto)` : undefined}
+        >
+          {#each $entries as e (`${e.setId}:${e.ch}`)}
+            <button
+              type="button"
+              class="row"
+              class:fade={e.state === 'fade'}
+              class:off={e.state === 'off'}
+              data-testid="legend-entry"
+              title="Click to cycle: on → fade → off → on"
+              onclick={() => { if (!justDragged) selection.cycleLine(e.setId, e.ch); }}
+            >
+              <span class="swatch" style:background={e.color}></span>
+              <span class="label">{e.label}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
       </div>
-    {:else}
-      <!-- Full: labelled rows; >10 entries wrap into balanced columns
-           reading top-to-bottom then across (grid-auto-flow: column). -->
-      <div
-        bind:this={listEl}
-        class="rows"
-        class:multi={wrapCols > 1}
-        style:grid-template-rows={wrapCols > 1 ? `repeat(${wrapRows}, auto)` : undefined}
-      >
-        {#each $entries as e (`${e.setId}:${e.ch}`)}
-          <button
-            type="button"
-            class="row"
-            class:fade={e.state === 'fade'}
-            class:off={e.state === 'off'}
-            data-testid="legend-entry"
-            title="Click to cycle: on → fade → off → on"
-            onclick={() => { if (!justDragged) selection.cycleLine(e.setId, e.ch); }}
-          >
-            <span class="swatch" style:background={e.color}></span>
-            <span class="label">{e.label}</span>
-          </button>
-        {/each}
-      </div>
-    {/if}
     </div>
   </div>
 {/if}
 
 <style>
+  /* The axes frame's box (see the template); positioned inline. */
+  .legend-frame {
+    position: absolute;
+    pointer-events: none;
+  }
   .legend {
     position: absolute;
     z-index: 5;
+    pointer-events: auto;
+    /* Its own content's width, capped by max-width, NOT shrink-to-fit: a
+       dragged card may overhang the frame box into the plot's margins, and
+       a shrink-to-fit width would narrow as it did (see `offset`). */
+    width: max-content;
     max-width: 46%;
-    /* Never taller than the plot area (its offsetParent), 4 px (INSET)
+    /* Never taller than the axes frame (its offsetParent), 8 px (INSET)
        clear of each edge: the rows scroll in .legend-body instead (see the
        header). */
-    max-height: calc(100% - 8px);
+    max-height: calc(100% - 16px);
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
