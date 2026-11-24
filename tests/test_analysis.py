@@ -1448,6 +1448,95 @@ class TestDampingByBand:
         with pytest.raises(ValueError, match='bands'):
             analysis.calculate_damping_by_band(td, n_chan=0, bands='decade')
 
+    # ---- noise floor: cut where the decay meets it (2026-11-24) ----
+
+    @staticmethod
+    def _modes_in_noise(noise_rms=1e-2, seed=5):
+        """One mode per octave (250 Hz Q300, 1 kHz Q300, 2 kHz Q600) in white
+        noise, 5 s at 10 kHz: the 1 and 2 kHz decays reach the noise within
+        about half a second, long before the record ends."""
+        fs, N = 10000, 50000
+        rng = np.random.default_rng(seed)
+        y = (_decaying_sine(fs, N, 250.0, 300.0)
+             + 0.5 * _decaying_sine(fs, N, 1000.0, 300.0)
+             + 0.5 * _decaying_sine(fs, N, 2000.0, 600.0)
+             + noise_rms * rng.standard_normal(N))
+        return _make_time_data(y[:, None], fs)
+
+    @staticmethod
+    def _t60(fn, Q):
+        return 3 * np.log(10) / (1.0 / (2 * Q) * 2 * np.pi * fn)
+
+    def test_t60_unbiased_when_decay_ends_early(self):
+        """Integrated to the record's end, the noise held the 1 and 2 kHz
+        curves up (T60 ~15 s); cut where each decay meets its floor, with the
+        decay's own energy beyond added, every single-mode band reads its
+        true T60."""
+        td = self._modes_in_noise()
+        out = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='octave', f_range=(40.0, 4000.0))
+        for fn, Q in ((250.0, 300.0), (1000.0, 300.0), (2000.0, 600.0)):
+            j = int(np.argmin(np.abs(out['fc'] - fn)))
+            truth = self._t60(fn, Q)
+            assert out['T60'][j] == pytest.approx(truth, rel=0.05), (fn, out['T60'][j])
+        for fn, Q in ((1000.0, 300.0), (2000.0, 600.0)):
+            j = int(np.argmin(np.abs(out['fc'] - fn)))
+            # Cut after the decay has fallen at least 20 dB, well before the end.
+            assert self._t60(fn, Q) / 3 < out['cut_time'][j] < 0.25 * 5.0
+
+    def test_band_without_a_mode_has_no_trusted_t60(self):
+        """The 62.5 Hz octave holds no mode, only the onset's broadband step
+        through the band filter: no T60 is trusted there."""
+        td = self._modes_in_noise()
+        out = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='octave', f_range=(40.0, 4000.0))
+        j = int(np.argmin(np.abs(out['fc'] - 62.5)))
+        assert np.isnan(out['T60'][j])
+        assert np.isnan(out['Qn'][j])
+        flagged = [out[f'{m}_flag'][j] for m in ('EDT', 'T20', 'T30')
+                   if np.isfinite(out[m][j])]
+        assert all(flagged), out
+
+    def test_new_outputs_shapes(self):
+        td = self._modes_in_noise()
+        out = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='octave', f_range=(40.0, 4000.0))
+        n = len(out['fc'])
+        for key in ('noise_db', 'range_db', 'cut_time'):
+            assert np.asarray(out[key]).shape == (n,), key
+        for key in ('EDT_flag', 'T20_flag', 'T30_flag'):
+            assert len(out[key]) == n and all(isinstance(s, str) for s in out[key])
+        assert np.all(np.asarray(out['noise_db']) <= 0.0)
+        np.testing.assert_allclose(out['range_db'], -np.asarray(out['noise_db']))
+        for b, c in zip(out['band_data'], out['cut_time']):
+            assert b['cut_t'] == pytest.approx(c)
+
+    def test_no_noise_matches_the_uncut_curve(self):
+        """With no noise the floor is the decay's own last tenth, the cut
+        lands near the record's end, and the result is today's (to 1 %)."""
+        td = self._noise_decay_td(0.5)
+        out = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='octave', f_range=(80.0, 3000.0))
+        ok = np.isfinite(out['T60'])
+        assert ok.sum() >= 4
+        np.testing.assert_allclose(out['T60'][ok], 0.5, rtol=0.15)
+        assert all(out['T30_flag'][i] == '' for i in np.flatnonzero(ok))
+
+    def test_default_start_is_the_onset(self):
+        """With no pretrigger and no start_time the decay starts at its onset
+        (the loudest sample, plus 2.3 ms), not at t = 0."""
+        fs, t60 = self.FS, 0.4
+        rng = np.random.default_rng(3)
+        n_head = int(0.3 * fs)
+        t = np.arange(self.N) / fs
+        y = np.concatenate([1e-8 * rng.standard_normal(n_head),
+                            rng.standard_normal(self.N) * 10.0 ** (-3.0 * t / t60)])
+        td = _make_time_data(y[:, None], fs)
+        out = analysis.calculate_damping_by_band(
+            td, n_chan=0, bands='all', f_range=(100.0, 2000.0))
+        assert 0.3 <= out['start_time'] <= 0.33
+        assert out['T60'][0] == pytest.approx(t60, rel=0.10)
+
 
 class TestResampleToFs:
     """`resample_to_fs` — the round-9 band-limited resampler behind the

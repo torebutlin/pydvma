@@ -2379,6 +2379,118 @@ def _band_centres(f_lo, f_hi, bands):
     return 1000.0 * r ** np.arange(k_lo, k_hi + 1)
 
 
+# ---- Where a decay meets the noise (2026-11-24) ----
+# The logic of vibration_apps' reverb app (shared/js/dsp/decay.js), after the
+# 4C6 notes 4.13: "identify the transient portion of the signal above the
+# noise floor". A record never ends in silence; fitted or integrated past the
+# point where the decay meets the noise, the noise reads as decay.
+
+DECAY_FLOOR_MARGIN_DB = 10.0
+"""dB above the noise floor at which a decay stops being fitted: there the
+noise adds at most ~0.4 dB to the level (decay.js `noiseFloor`)."""
+
+DECAY_TAIL_FRACTION = 0.1
+"""Fraction of the record, at its end, whose mean power is taken as the
+noise floor."""
+
+DECAY_NEEDS_DB = {'EDT': 20.0, 'T20': 35.0, 'T30': 45.0}
+"""How far (dB) the decay must start above the noise for each band metric to
+be trusted: ISO 3382's 35 dB for T20 and 45 dB for T30; EDT's 10 dB range
+plus the same 10 dB margin."""
+
+DECAY_DROP_RANGE = (0.6, 1.0 / 0.6)
+"""A fitted line must fall between 0.6 and 1/0.6 of its window's own drop
+(10, 20 or 30 dB) to be trusted: outside it the curve is bent (a second
+sound, or noise holding it up), not a straight decay (decay.js `DROP`)."""
+
+
+def _decay_floor_stretch(P, tail_count, margin_db=DECAY_FLOOR_MARGIN_DB):
+    '''Noise floor of a decaying power series and the decay stretch above it.
+
+    ``P`` is a non-negative power (mean-square) series that starts at the
+    decay. The floor is the mean of its last ``tail_count`` entries (floored
+    at the smallest positive float, so a silent tail never divides by zero).
+    The decay runs from the loudest entry ``kp`` until the level first comes
+    within ``margin_db`` of the floor; ``kend`` is the last entry above it
+    (``kend == kp`` when even the loudest is not above it).
+
+    Returns ``(noise, kp, kend)``.
+    '''
+    P = np.asarray(P, dtype=np.float64)
+    tail_count = int(min(max(1, tail_count), P.size))
+    noise = max(float(np.mean(P[-tail_count:])), np.finfo(np.float64).tiny)
+    kp = int(np.argmax(P))
+    above = P[kp + 1:] > noise * 10.0 ** (margin_db / 10.0)
+    kend = kp + (int(np.argmin(above)) if not above.all() else above.size)
+    return noise, kp, kend
+
+
+def _decay_onset(y, fs):
+    '''Index where a decay's analysis starts when nothing says otherwise: the
+    loudest sample, plus ``100/44100`` s (2.3 ms) — decay.js `onset`, after
+    reverb2.ipynb.'''
+    k = int(np.argmax(np.abs(y)))
+    return int(min(len(y) - 1, k + round(100.0 / 44100.0 * fs)))
+
+
+def _band_decay_cut(yb, fs, block_s):
+    '''Schroeder curve of one band's decay, cut where it meets the noise.
+
+    decay.js `noiseFloor` + `reverbTimes(cut=True)`: the band's mean square in
+    blocks of ``block_s``; the floor from the last tenth of the blocks; a line
+    through the block levels from the loudest block until they first come
+    within `DECAY_FLOOR_MARGIN_DB` of the floor; the crossover where that line
+    meets the floor (the record's end when there is no usable line, or the
+    line meets it later). The backward integral of ``yb**2`` stops at the
+    crossover, and the fitted decay's own energy beyond it,
+    ``P(t_end) * fs / k`` with ``P ~ exp(-k t)``, is added — so the curve
+    neither counts the noise as decay nor dives to minus infinity at the cut.
+
+    Returns ``(L, end, noise_db, range_db)``: the curve in dB (0 at the
+    start, one value per sample up to ``end``), the cut's sample index, the
+    floor in dB re the loudest block, and the loudest block above the floor.
+    '''
+    n = yb.size
+    B = max(1, int(round(block_s * fs)))
+    nb = max(1, n // B)
+    Pb = (yb[:nb * B] ** 2).reshape(nb, -1).mean(axis=1) if n >= B else np.array([np.mean(yb ** 2)])
+    noise, kp, kend = _decay_floor_stretch(
+        Pb, int(round(DECAY_TAIL_FRACTION * nb)))
+    top = float(Pb[kp]) if Pb[kp] > 0 else 1.0
+    noise_db = 10.0 * np.log10(noise / top)
+    end, tail = n, 0.0
+    if kend - kp >= 2:
+        tb = (np.arange(kp, kend + 1) + 0.5) * (B / fs)
+        db = 10.0 * np.log10(np.maximum(Pb[kp:kend + 1], np.finfo(np.float64).tiny) / top)
+        slope, icpt = np.polyfit(tb, db, 1)
+        if slope < 0:
+            tc = (noise_db - icpt) / slope
+            end = int(min(n, max(1, round(tc * fs))))
+            k = -slope * np.log(10.0) / 10.0
+            tail = top * 10.0 ** ((slope * (end / fs) + icpt) / 10.0) * fs / k
+    e = np.flip(np.cumsum(np.flip(np.asarray(yb[:end], dtype=np.float64) ** 2))) + tail
+    e0 = e[0] if e[0] > 0 else 1.0
+    L = 10.0 * np.log10(np.maximum(e / e0, 1e-30))
+    return L, end, float(noise_db), float(-noise_db)
+
+
+def _band_metric_flag(name, T, drop, range_db, min_t):
+    '''Why a band metric is not trusted: ``'range'`` (the decay starts too
+    close to the noise, `DECAY_NEEDS_DB`), ``'short'`` (shorter than the band
+    filter's own ringing), ``'bent'`` (the line does not follow the curve,
+    `DECAY_DROP_RANGE`), comma-joined; ``''`` when trusted or NaN.'''
+    if not np.isfinite(T):
+        return ''
+    why = []
+    if range_db < DECAY_NEEDS_DB[name]:
+        why.append('range')
+    if T < min_t:
+        why.append('short')
+    if not (DECAY_DROP_RANGE[0] <= drop <= DECAY_DROP_RANGE[1]):
+        why.append('bent')
+    return ','.join(why)
+
+
 def _schroeder_db(y):
     '''Schroeder backward-integrated energy-decay curve in dB (max 0 dB).
 
@@ -2396,13 +2508,15 @@ def _fit_decay_time(t, L, top_db, bottom_db):
     '''Straight-line fit of the EDC ``L`` (dB) over the ``top_db..bottom_db``
     window, extrapolated to the 60 dB decay time.
 
-    Returns ``(T60, i0, i1, slope, intercept)`` — the decay time (s), the
-    fitted window's index bounds, and the fitted line's coefficients (dB/s,
-    dB) — or ``(nan, 0, 0, nan, nan)`` when the curve never reaches
+    Returns ``(T60, i0, i1, slope, intercept, drop)`` — the decay time (s),
+    the fitted window's index bounds, the fitted line's coefficients (dB/s,
+    dB), and how far the line falls across the window over the window's own
+    drop (1 for a straight decay; see `DECAY_DROP_RANGE`) — or
+    ``(nan, 0, 0, nan, nan, nan)`` when the curve never reaches
     ``bottom_db`` (insufficient decay range for this window), the window
     holds too few samples, or the slope is not a decay.
     '''
-    bad = (np.nan, 0, 0, np.nan, np.nan)
+    bad = (np.nan, 0, 0, np.nan, np.nan, np.nan)
     i0 = int(np.argmax(L <= top_db))
     if L[-1] > bottom_db or L[i0] > top_db + 1e-12:
         return bad
@@ -2412,7 +2526,8 @@ def _fit_decay_time(t, L, top_db, bottom_db):
     slope, icpt = np.polyfit(t[i0:i1], L[i0:i1], 1)
     if not (slope < 0):
         return bad
-    return -60.0 / slope, i0, i1, float(slope), float(icpt)
+    drop = -slope * (t[i1 - 1] - t[i0]) / (top_db - bottom_db)
+    return -60.0 / slope, i0, i1, float(slope), float(icpt), float(drop)
 
 
 def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
@@ -2479,10 +2594,14 @@ def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
     yc = y[:, n_chan].astype(np.float64)
     t = np.asarray(time_data.time_axis, dtype=np.float64)
 
-    # Resolve the decay start on the RAW time axis (default: the very start —
-    # unlike the STFT there is no window-centring to skip past).
-    i_start = _resolve_damping_start_slice(t, start_time, time_data.settings,
-                                           default_start_frac=0.0)
+    # Resolve the decay start on the RAW time axis: an explicit start_time,
+    # else the pretrigger, else the onset (the loudest sample + 2.3 ms;
+    # starting at t = 0 put the quiet before the impact into the decay).
+    if start_time is None and not getattr(time_data.settings, 'pretrig_samples', None):
+        i_start = _decay_onset(yc, fs)
+    else:
+        i_start = _resolve_damping_start_slice(t, start_time, time_data.settings,
+                                               default_start_frac=0.0)
     y_dec = yc[i_start:]
     t_dec = t[i_start:] - t[i_start]
     if y_dec.size < 64:
@@ -2517,37 +2636,54 @@ def calculate_damping_by_band(time_data, n_chan=1, bands='octave',
     # Q = 1/(2 zeta) with T60 = 3 ln10 / (zeta * 2 pi fc).
     q_per_fct60 = np.pi / (3.0 * np.log(10.0))
 
+    out.update({
+        'noise_db': np.full(n, np.nan), 'range_db': np.full(n, np.nan),
+        'cut_time': np.full(n, np.nan),
+        'EDT_flag': [''] * n, 'T20_flag': [''] * n, 'T30_flag': [''] * n,
+    })
+    windows = {'EDT': (0.0, -10.0), 'T20': (-5.0, -25.0), 'T30': (-5.0, -35.0)}
+
     for i, (fc, (lo, hi)) in enumerate(zip(centres, edges)):
         sos = signal.butter(filter_order, [lo, hi], btype='bandpass',
                             fs=fs, output='sos')
         yb = signal.sosfiltfilt(sos, y_dec)
-        L = _schroeder_db(yb)
+        # Blocks long enough to hold two of the band's cycles (10 ms or more).
+        L, end, noise_db, range_db = _band_decay_cut(
+            yb, fs, max(0.01, 2.0 / fc))
+        t_cut = t_dec[:end]
+        min_t = 16.0 / (hi - lo)   # the band filter's own ringing (B*T > 16)
 
         # Each _fit_decay_time already extrapolates its window's slope to the
         # full 60 dB decay time (that IS the standard definition of EDT/T20/
         # T30 — a 60 dB extrapolation of the 10/20/30 dB fit).
-        edt = _fit_decay_time(t_dec, L, 0.0, -10.0)[0]
-        f20 = _fit_decay_time(t_dec, L, -5.0, -25.0)
-        f30 = _fit_decay_time(t_dec, L, -5.0, -35.0)
-        # T60 preference: T30's wider window when it exists, else T20.
-        best = f30 if np.isfinite(f30[0]) else f20
-        t60, j0, j1, slope, icpt = best
+        fits = {}
+        for name, (top_db, bottom_db) in windows.items():
+            f = _fit_decay_time(t_cut, L, top_db, bottom_db)
+            fits[name] = f
+            out[name][i] = f[0]
+            out[f'{name}_flag'][i] = _band_metric_flag(name, f[0], f[5], range_db, min_t)
+        # T60: the widest trusted window — T30, else T20, else EDT.
+        trusted = [k for k in ('T30', 'T20', 'EDT')
+                   if np.isfinite(fits[k][0]) and not out[f'{k}_flag'][i]]
+        t60, j0, j1, slope, icpt = (fits[trusted[0]][:5] if trusted
+                                    else (np.nan, 0, 0, np.nan, np.nan))
 
-        out['EDT'][i] = edt
-        out['T20'][i] = f20[0]
-        out['T30'][i] = f30[0]
         out['T60'][i] = t60
         out['Qn'][i] = q_per_fct60 * fc * t60 if np.isfinite(t60) else np.nan
+        out['noise_db'][i] = noise_db
+        out['range_db'][i] = range_db
+        out['cut_time'][i] = float(t_dec[end - 1])
 
         # Plotting payload, decimated to keep the FFI transfer small: the EDC
-        # plus the T60 fit LINE over its fitted window.
+        # (up to the cut) plus the T60 fit LINE over its fitted window.
         step = max(1, L.size // 1024)
         band = {
             'fc': float(fc), 'f_lo': float(lo), 'f_hi': float(hi),
-            'edc_t': t_dec[::step], 'edc_db': L[::step],
+            'edc_t': t_cut[::step], 'edc_db': L[::step],
+            'cut_t': float(t_dec[end - 1]),
         }
         if np.isfinite(t60) and j1 > j0:
-            band['fit_t'] = np.array([t_dec[j0], t_dec[j1]])
+            band['fit_t'] = np.array([t_cut[j0], t_cut[j1]])
             band['fit_db'] = slope * band['fit_t'] + icpt
         out['band_data'].append(band)
 
