@@ -266,16 +266,31 @@ a narrow screen). Choose the method with **peaks | bands**.
   left chart shows the spectrum at the start time with a **threshold**
   line you can drag (or type; blank is automatic): only peaks above it
   are fitted. The other chart shows the measured decay of each mode with
-  its fitted line and an `f Hz, Qn=…` legend. It works with either
-  sonogram method, and the CWT can separate modes that the STFT merges.
+  its fitted line and an `f Hz, Qn=…` legend. Each mode is fitted only
+  while it stands more than 10 dB above its own noise floor, so the
+  chart's markers stop where the noise begins. A peak with fewer than
+  three frames above that gets no fit. It works with either sonogram
+  method, and the CWT can separate modes that the STFT merges.
 - **bands** filters the decay into bands (**all (broadband)**,
   **octave**, **1/3 octave** or **1/10 decade**), forms each band's
   Schroeder energy-decay curve, and reports **EDT**, **T20**, **T30**
-  and **T60** and the band's **Qn**. A `—` in the table means that band's
-  decay range was too small to fit.
+  and **T60** and the band's **Qn**. Each band's curve stops where its
+  decay meets the noise, marked by a tick on the chart, and the decay's
+  own energy beyond that point is added back. Integrating on to the end
+  of the record would count the noise as decay. A greyed value is not
+  trusted, and hovering it says why. Either the decay starts too close to
+  the noise for that window (20 dB for EDT, 35 dB for T20, 45 dB for T30,
+  as ISO 3382 asks), or it is shorter than the band filter's own ringing,
+  or its fitted line doesn't follow the curve. **T60** is the first
+  trusted value of T30, T20 and EDT. A `—` means the
+  decay never spanned that window, or, for T60, that none is trusted.
+  **Save CSV** writes the table with each band's range above the noise,
+  its cut time and the flags.
 
 Both methods share **start (s)**, a number box (blank lets pydvma infer
-it from the pretrigger) and a draggable **start line** on the sonogram.
+it: from the pretrigger, or else, for **bands**, from the impact, 2.3 ms
+after the loudest sample) and a draggable **start line** on the
+sonogram.
 Together they set where the free decay begins. The fit updates as you
 change any control.
 

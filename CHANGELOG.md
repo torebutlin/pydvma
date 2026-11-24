@@ -7,6 +7,37 @@ follows [semantic versioning](https://semver.org/).
 
 ### Changed
 
+- **Damping fits stop where the decay meets the noise, so their numbers
+  change.** The logic is the 4C6 reverb app's (vibration_apps
+  `decay.js`), after the 4C6 notes 4.13.
+  - **By band:** `calculate_damping_by_band` integrated each band's
+    Schroeder curve to the end of the record, so the noise after a decay
+    counted as decay. A band whose decay ended well before the record read
+    a T60 many times too long. On a 4C6 hammer record the 1 kHz octave read
+    18.4 s; its modes put it at about 2–4.6 s, and it now reads 2.4 s. Each
+    band's curve now stops at its noise floor and adds back the decay's own
+    energy beyond it.
+  - **Trust flags:** EDT, T20 and T30 are flagged when the band doesn't
+    support them: `range` (the decay starts under 20/35/45 dB above the
+    noise), `short` (shorter than the band filter's ringing) or `bent`
+    (the line doesn't follow the curve). T60 is the first trusted of T30,
+    T20 and EDT, and NaN when none is. Bands holding no mode now read NaN
+    where they used to read 1–30 s.
+  - **New outputs:** `noise_db`, `range_db`, `cut_time`, `EDT_flag`,
+    `T20_flag`, `T30_flag`, and `band_data[i]['cut_t']`.
+  - **Start:** with no pretrigger and no start time, the band fit starts at
+    the impact (the loudest sample plus 2.3 ms), not at t = 0.
+  - **Peaks (STFT and CWT):** each mode is fitted with a straight line
+    only while it stands more than 10 dB above its own floor, instead of a
+    decay-plus-noise model over the whole record. That model's free noise
+    level could land far below the real floor and fit the tail as decay.
+    Qs of fast or noisy modes move by a few per cent: the Q error's 90th
+    percentile over 30 synthetic records fell from 10–14 % to 6–8 %. A mode
+    with fewer than three frames above its floor is no longer fitted (it
+    stays a candidate peak). Fits gain `noise`, `t_cross` and `range_db`.
+  - **In the app:** the band table greys untrusted values, with the reason
+    on hover. The EDC chart marks where each curve stops. The band CSV
+    gains `range_dB`, `cut_s` and the three flag columns.
 - **Best Match takes its reference by card.** The TF card's **ref ch**
   (a channel of whichever set the dataset list showed, never named) is
   now **ref TF**, which lists the transfer functions by the name of

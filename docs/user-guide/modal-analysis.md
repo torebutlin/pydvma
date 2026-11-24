@@ -93,8 +93,13 @@ The algorithm:
 1. Computes a Hann-window sonogram (a short-time Fourier transform).
 2. Finds frequency peaks in the spectrum at the start time.
 3. Tracks the decay of each peak over time.
-4. Fits an exponential decay, with a noise floor, to the log magnitude,
-   and a straight line to the phase.
+4. Measures each peak's noise floor (the mean power of the last tenth of
+   its frames) and fits a straight line to the log magnitude, and another
+   to the phase, only from the decay's loudest frame until it comes within
+   10 dB of that floor. A peak with fewer than three frames above it gets
+   no fit. Each entry of `fit_data['fits']` reports its `noise` floor
+   (as ln|S|), `t_cross` (where the fitted decay meets the floor) and
+   `range_db`.
 5. Returns natural frequencies and Q factors.
 
 ### Tips for Good Results
@@ -169,18 +174,44 @@ out = dvma.calculate_damping_by_band(
     f_range=None,          # None: 4/T to 0.4*fs
 )
 
-# Ladder arrays (NaN where a band's decay range was too small to fit):
+# Ladder arrays (NaN where a band's decay never spans that window):
 out['fc']    # band centres, Hz, anchored at 1000 Hz
 out['EDT']   # early decay time (0 to -10 dB fit, x6)
 out['T20']   # -5 to -25 dB fit, x3
 out['T30']   # -5 to -35 dB fit, x2
-out['T60']   # reverberation time (T30 where it exists, else T20)
+out['T60']   # the first TRUSTED of T30, T20, EDT (NaN when none is)
 out['Qn']    # band-centred Q = pi*fc*T60 / (3 ln 10)
 
-# out['band_data'][i] holds each band's decay curve and T60 fit line, for plotting.
+out['range_db']   # the decay's start above the band's noise floor, dB
+out['cut_time']   # where the band's decay curve stops, s after the start
+out['T30_flag']   # why each T30 is not trusted ('' when it is); also EDT_, T20_
+
+# out['band_data'][i] holds each band's decay curve (up to its cut), the
+# cut time and the T60 fit line, for plotting.
 ```
 
+Each band's Schroeder integral stops where its decay meets the noise. The
+floor is the mean square of the last tenth of the decay. A line through
+the band's level, from its loudest point to 10 dB above the floor, meets
+the floor at the cut. The decay's own energy beyond the cut is added
+back, so the curve neither counts noise as decay nor dives at the end of
+the record. Integrating on to the record's end can make a decay that
+ended early read many times too long.
+
+A metric's flag names why it is not trusted:
+
+- `'range'`: the decay starts less than 20 (EDT), 35 (T20) or 45 (T30) dB
+  above the noise, as ISO 3382 asks;
+- `'short'`: shorter than the band filter's own ringing, `16/(f_hi - f_lo)`;
+- `'bent'`: the fitted line falls outside 0.6–1.67 of its window's own drop.
+
+A flagged value is still reported; only T60 passes over it. Bands with no
+mode in them, such as the lowest bands of the default ladder, are usually
+flagged `'short'`.
+
 Use `bands='all'` for a single broadband decay (one overall T60).
+With no pretrigger and `start_time=None`, the band method starts at the
+impact: the loudest sample plus 2.3 ms.
 
 ## SDOF Modal Fitting
 
