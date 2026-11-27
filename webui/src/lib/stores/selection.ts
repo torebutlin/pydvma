@@ -6,9 +6,10 @@ const NEXT: Record<TriState, TriState> = { on: 'fade', fade: 'off', off: 'on' };
 /**
  * Fixed 12-colour palette for plot lines.
  *
- * Colours are assigned once, at `addSet` time, by cumulative channel
- * offset (see `createSelection.addSet`) and stored on the set record —
- * they never shift as sets are cycled, soloed, reordered, or removed.
+ * Colours are assigned once, at `addSet` time, from the colours fewest
+ * lines on screen are using (see `leastUsedColors`) and stored on the set
+ * record — they never shift as sets are cycled, soloed, reordered, or
+ * removed.
  * `LINE_PALETTE` + `lineColor(id, ch)` are the single source of truth
  * for line colours; the plot model (Task 12) must consume these rather
  * than deriving its own.
@@ -16,6 +17,38 @@ const NEXT: Record<TriState, TriState> = { on: 'fade', fade: 'off', off: 'on' };
 export const LINE_PALETTE = [
   '#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2',
   '#be185d', '#4d7c0f', '#9333ea', '#0e7490', '#b91c1c', '#15803d'];
+
+/**
+ * Colours for a new data set's `n` lines: each line in turn takes the
+ * `LINE_PALETTE` colour used by the fewest lines of the DATA sets in
+ * `present` (ties: earliest in the palette), counting that line before the
+ * next is chosen. Fit pseudo-sets mirror their source and are not counted.
+ *
+ * With nothing ever deleted this gives the same colours as the old rule
+ * (palette index = number of data lines before this one, mod 12), so a file
+ * opens in the colours it always had. After a delete the freed colours come
+ * back first, so no two lines share a colour until there are more than 12
+ * (4C6 lab, 2026-11: log, delete, log again had given the new set a
+ * survivor's colours, because the old offset counted lines, not colours).
+ * A colour chosen in the tray's ⋯ panel counts like any other.
+ */
+function leastUsedColors(present: readonly SetRecord[], n: number): string[] {
+  const uses = LINE_PALETTE.map(() => 0);
+  const slot = new Map(LINE_PALETTE.map((c, i) => [c.toLowerCase(), i]));
+  for (const s of present) {
+    if (s.role !== 'data') continue;
+    for (const c of s.colors) {
+      const i = slot.get(c.toLowerCase());
+      if (i !== undefined) uses[i] += 1;
+    }
+  }
+  return Array.from({ length: n }, () => {
+    let best = 0;
+    for (let i = 1; i < uses.length; i++) if (uses[i] < uses[best]) best = i;
+    uses[best] += 1;
+    return LINE_PALETTE[best];
+  });
+}
 
 /**
  * A set's ROLE (round-5 item 13). `'data'` is a normal measured/derived
@@ -290,14 +323,15 @@ export function createSelection() {
 
     /**
      * Register a dataset and return its stable id. Line colours are
-     * assigned here — `LINE_PALETTE[(start + ch) % 12]` where `start`
-     * is the total channel count of the DATA sets present at add time — and
-     * stored on the record, so they never change afterwards. New lines
+     * assigned here — each line takes the palette colour used by the fewest
+     * DATA-set lines present at add time, ties in palette order
+     * (`leastUsedColors`) — and stored on the record, so they never change
+     * afterwards. New lines
      * default to 'on' (sparse-map default), even after a prior `none()`.
      * Sets with more than `AUTO_COLLAPSE_CHANNELS` channels start collapsed.
      *
      * `entry.role` (default `'data'`) marks the modal-fit pseudo-set (round-5
-     * item 13); a fit set does NOT advance the palette offset (so adding /
+     * item 13); a fit set's lines are not counted as using a colour (so adding /
      * dropping a fit set never shifts a later data set's colours) and, when
      * `entry.colors` is supplied, adopts those verbatim — a fit set passes its
      * TARGET set's colours so a recon line mirrors the measured line's colour.
@@ -305,14 +339,11 @@ export function createSelection() {
     addSet(entry: SetEntry, opts: { hidden?: boolean } = {}): number {
       const id = nextId++;
       const role: SetRole = entry.role ?? 'data';
-      // Only DATA sets consume palette slots, so a fit pseudo-set added later
-      // never shifts existing data colours and a data set added AFTER a fit set
-      // keeps its expected palette position.
-      const start = get(sets).reduce((acc, s) => acc + (s.role === 'data' ? s.nChannels : 0), 0);
+      // Only DATA sets' lines count as using a colour (`leastUsedColors`), so a
+      // data set added AFTER a fit set gets what it would have without it.
       const colors = entry.colors && entry.colors.length >= entry.nChannels
         ? entry.colors.slice(0, entry.nChannels)
-        : Array.from({ length: entry.nChannels },
-          (_, c) => LINE_PALETTE[(start + c) % LINE_PALETTE.length]);
+        : leastUsedColors(get(sets), entry.nChannels);
       // HIDDEN AT BIRTH (round-11 P6). The states go in BEFORE the set record
       // is published, so the set is never once emitted fully visible. A
       // post-hoc `setSetVisible(id, false)` leaves one frame in which every

@@ -498,3 +498,30 @@ test('trayFocus ignores a fit set: a data-set solo still reads as that set', () 
   sel.all();
   expect(get(sel.trayFocus)).toBe('all');
 });
+
+// ---- Automatic colours after a delete (2026-11-27, 4C6 lab) ----
+// The palette offset used to be the number of data channels in the tray, so a
+// delete lowered the count without freeing a colour: log A, log B, delete A,
+// log C gave C exactly B's colours. A new set now takes the colours used by the
+// fewest lines on screen, ties in palette order.
+
+test('a set logged after a delete takes the freed colours, not a survivor\'s', () => {
+  const s = createSelection();
+  const a = s.addSet({ name: 'A', nChannels: 2, durationS: 1, timestamp: '' });
+  const b = s.addSet({ name: 'B', nChannels: 2, durationS: 1, timestamp: '' });
+  s.removeSet(a);
+  const c = s.addSet({ name: 'C', nChannels: 2, durationS: 1, timestamp: '' });
+  expect([s.lineColor(c, 0), s.lineColor(c, 1)]).toEqual([LINE_PALETTE[0], LINE_PALETTE[1]]);
+  expect([s.lineColor(c, 0), s.lineColor(c, 1)])
+    .not.toEqual(expect.arrayContaining([s.lineColor(b, 0)]));
+});
+
+test('past 12 lines the least-used colours go next', () => {
+  const s = createSelection();
+  const ids = Array.from({ length: 6 }, (_, i) =>
+    s.addSet({ name: `S${i}`, nChannels: 2, durationS: 1, timestamp: '' }));
+  s.removeSet(ids[2]);                                     // frees palette 4 and 5
+  const d = s.addSet({ name: 'D', nChannels: 3, durationS: 1, timestamp: '' });
+  expect([0, 1, 2].map((c) => s.lineColor(d, c)))
+    .toEqual([LINE_PALETTE[4], LINE_PALETTE[5], LINE_PALETTE[0]]);
+});
