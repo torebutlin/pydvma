@@ -8,6 +8,32 @@ consolidated in `dev/hardware-lessons-learnt.md` — read it before any
 sound-card or lab-PC work; TODO.md's hardware section lists what is
 still open.**
 
+As of 2026-11-27 (Mac; committed, NOT pushed; CHANGELOG `## Unreleased`):
+**line colour and thickness per line, and no more same-coloured sets**
+(4C6 lab: two sets' lines came out one colour). Design/plan
+`dev/plans/2026-11-27-line-style-*`. The bug: a new set's colours were
+`(lines in tray + ch) % 12`, so log, delete, log again reused a survivor's
+colours; now each line takes the least-used palette colour
+(`leastUsedColors`; identical to the old rule when nothing was deleted).
+The feature: a ⋯ at the RIGHT END of each data card's header (last, so the
+hover-only cal/× cannot shift it under the pointer) opens
+`LineStylePopover` — mounted on `document.body`, z-index 90 (above the
+narrow drawer's 80, below dialogs' 330), Escape taken in the capture
+phase so the drawer stays open — with the 12 palette colours and
+thin/normal/bold (1/1.5/2.5 px) per line, Reset to automatic, no dashes.
+Styles live on the set record (`colors`, `autoColors`, `widths`), go
+through `actions.setLineStyle`/`resetLineStyles` (fit lines mirror the
+colour; the document re-emits for autosave/journal), persist sparsely as
+`ui.line_colors`/`ui.line_widths`, and are restored after every set of a
+file is in, then `settleAutoColors` moves automatic lines off picked
+colours. The legend key and the printed legend swatch follow the weight.
+Also: a TF-only set's renamed channels now come back on reload. The
+legend "snapping" students saw is the pre-2.9.0 drop jump (fixed in
+2.9.0): the lab PCs need their Setup bat re-run. Suites: vitest 1570/1,
+check 0/0, Playwright 124 passed/32 skipped, mkdocs --strict clean.
+Reviewed by a fresh reviewer; follow-ups in TODO.md "Line colour and
+thickness follow-ups".
+
 As of 2026-11-24 (Mac; committed, NOT pushed; CHANGELOG `## Unreleased`,
 no version bump): **the damping fits stop where the decay meets the
 noise**, after vibration_apps' `shared/js/dsp/decay.js` (reverb app; Tore's

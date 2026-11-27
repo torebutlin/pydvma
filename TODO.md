@@ -659,6 +659,16 @@ was added 2026-09-29.
 - Test gaps: marker cx/cy vs path vertices; x-label clamp and end-tick rule; R9 below-legend numbers; columns-keep-a-card; faded label inside its group; figureBytes dispatch; viewFigure all-off legend and sono-without-image; width blur-clamp/preset UI; legend e2e beyond a left-margin drag and Time-view presets; min-width overflow path.
 - Small cleanups: OFL.txt header and the subset script name a macOS system path; design.md's "~150 per inch" should read 288; the printFigureSvg docstring repeats PRINT_CHROME hexes; withEmbeddedFont silently no-ops without a root; img.decode() rejection message; clampFigureWidth maps +-Infinity to 160; the width note/preset buttons lack aria wiring; escAttr per legend row.
 
+### Line colour and thickness follow-ups (2026-11-27)
+
+- The ⋯ pop-up sits outside the narrow drawer's focus trap and has none of its own: Tab from its last button leaves it.
+- It closes on a press outside through a bubbling `window` pointerdown; a handler that stops pointerdown would leave it open (listen in capture).
+- `selection.setLineColor` accepts any string; only the load path checks `#rrggbb`. Guard the store too.
+- `tests/plot/legendGrid.test.ts` builds `LegendEntry` without `weight` (tests sit outside `npm run check`; runtime covers it with `?? 'normal'`).
+- With ⋯ always shown, a hovered card's name has about 25 px less room (cal and × appear beside it).
+- Automatic colours are still handed out afresh on a reload, so after deletes the unpicked lines can come back in other colours than they were saved in (never clashing with a pick); saving every line's colour would pin them, at the cost of `ui` keys on every item.
+- The compact dot-grid legend does not show a line's weight.
+
 ## Backlog — hardware, acquisition & the next PC session
 
 - **Hardware lessons learnt** are consolidated in
