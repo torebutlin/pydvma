@@ -595,3 +595,34 @@ test('a set re-added with its record keeps its picked styles and its own automat
   s.resetLineStyles(back);
   expect(s.lineColor(back, 0)).toBe(LINE_PALETTE[0]);
 });
+
+test('Reset to automatic never hands back a colour another line now uses', () => {
+  // A (0, 1); A ch0 picked cyan frees blue; B takes blue and green (0, 2).
+  // Resetting A must not put A ch0 back on blue beside B.
+  const s = createSelection();
+  const a = s.addSet({ name: 'A', nChannels: 2, durationS: 1, timestamp: '' });
+  s.setLineColor(a, 0, LINE_PALETTE[5]);
+  const b = s.addSet({ name: 'B', nChannels: 2, durationS: 1, timestamp: '' });
+  expect([s.lineColor(b, 0), s.lineColor(b, 1)]).toEqual([LINE_PALETTE[0], LINE_PALETTE[2]]);
+  s.resetLineStyles(a);
+  const aCols = [s.lineColor(a, 0), s.lineColor(a, 1)];
+  expect(aCols[1]).toBe(LINE_PALETTE[1]);                 // still free: keeps its own
+  expect(aCols).not.toContain(LINE_PALETTE[0]);
+  expect(aCols).not.toContain(LINE_PALETTE[2]);
+  expect(s.getLineStylesForSet(a)).toBeUndefined();       // reset means nothing picked
+});
+
+test('settleAutoColors moves an automatic line off a picked colour while one is free', () => {
+  const s = createSelection();
+  const b = s.addSet({ name: 'B', nChannels: 2, durationS: 1, timestamp: '' });   // 0, 1
+  s.setLineColor(b, 0, LINE_PALETTE[1]);                                         // pick red: [1, 1]
+  s.settleAutoColors();
+  expect([s.lineColor(b, 0), s.lineColor(b, 1)]).toEqual([LINE_PALETTE[1], LINE_PALETTE[0]]);
+  expect(s.getLineStylesForSet(b)).toEqual({ line_colors: { 0: LINE_PALETTE[1] } });
+  // A file with no picks is left exactly as it was given.
+  const t = createSelection();
+  const ids = Array.from({ length: 7 }, (_, i) => t.addSet({ name: `S${i}`, nChannels: 2, durationS: 1, timestamp: '' }));
+  const before = ids.map((id) => get(t.sets).find((x) => x.id === id)!.colors.join());
+  t.settleAutoColors();
+  expect(ids.map((id) => get(t.sets).find((x) => x.id === id)!.colors.join())).toEqual(before);
+});

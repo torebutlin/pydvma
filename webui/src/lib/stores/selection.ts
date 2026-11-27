@@ -470,12 +470,71 @@ export function createSelection() {
       if (!isLineWeight(weight)) return;
       restyle(id, ch, (s) => ({ ...s, widths: s.widths.map((w, i) => (i === ch ? weight : w)) }));
     },
-    /** Put every line of set `id` back to the colours it was given and
-     *  normal weight. */
+    /**
+     * Give every line of set `id` an automatic colour and normal weight (the
+     * ⋯ pop-up's Reset). Each line gets back the colour it was given unless
+     * another line now uses it (a later set may have taken a colour this set
+     * freed by a pick); then it takes the least-used colour instead, so a
+     * Reset never creates the clash the automatic colours exist to avoid.
+     * Whatever results becomes the set's automatic colours.
+     */
     resetLineStyles(id: number) {
+      const list = get(sets);
+      const rec = list.find(s => s.id === id);
+      if (!rec) return;
+      const others = list.filter(s => s.id !== id);
+      const usedByOthers = new Set(others.filter(o => o.role === 'data')
+        .flatMap(o => o.colors.map(c => c.toLowerCase())));
+      // First every line whose own colour is still free keeps it, then the
+      // rest take the least-used colours, counting those kept.
+      const chosen: (string | null)[] = rec.autoColors.map((own, i) =>
+        (usedByOthers.has(own.toLowerCase())
+          || rec.autoColors.slice(0, i).some(c => c.toLowerCase() === own.toLowerCase()) ? null : own));
+      chosen.forEach((c, i) => {
+        if (c !== null) return;
+        const kept = chosen.filter((x): x is string => x !== null);
+        chosen[i] = leastUsedColors([...others, { ...rec, colors: kept }], 1)[0];
+      });
       sets.update(l => l.map(s => (s.id === id
-        ? { ...s, colors: s.autoColors.slice(), widths: s.widths.map((): LineWeight => 'normal') }
+        ? { ...s, colors: chosen as string[], autoColors: (chosen as string[]).slice(),
+          widths: s.widths.map((): LineWeight => 'normal') }
         : s)));
+    },
+    /**
+     * After picked colours are put back on load: move each AUTOMATIC line
+     * (one whose colour is still the one it was given) off a colour that a
+     * PICKED line uses, onto the first colour no line uses, while one is
+     * free; that becomes its automatic colour. Automatic colours on a reload
+     * are handed out afresh, so once a set had been deleted before the save
+     * they can differ from the save's, and a pick could otherwise land on
+     * another line's colour, even in the same set. A file with no picks is
+     * left exactly as given.
+     */
+    settleAutoColors() {
+      const list = get(sets).map(s => ({ ...s, colors: s.colors.slice(), autoColors: s.autoColors.slice() }));
+      const data = list.filter(s => s.role === 'data');
+      const picked = new Set<string>();
+      for (const s of data) {
+        s.colors.forEach((c, i) => {
+          if (c.toLowerCase() !== (s.autoColors[i] ?? '').toLowerCase()) picked.add(c.toLowerCase());
+        });
+      }
+      if (picked.size === 0) return;
+      const inUse = () => new Set(data.flatMap(s => s.colors.map(c => c.toLowerCase())));
+      let moved = false;
+      for (const s of data) {
+        s.colors.forEach((c, i) => {
+          const auto = c.toLowerCase() === (s.autoColors[i] ?? '').toLowerCase();
+          if (!auto || !picked.has(c.toLowerCase())) return;
+          const used = inUse();
+          const free = LINE_PALETTE.find(p => !used.has(p));
+          if (!free) return;
+          s.colors[i] = free;
+          s.autoColors[i] = free;
+          moved = true;
+        });
+      }
+      if (moved) sets.set(list);
     },
     /**
      * The lines of set `id` whose style was changed, for the `.dvma` `ui`:

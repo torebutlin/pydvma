@@ -1073,6 +1073,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     else derived.set(seed);
     // Before pass 3, so a restored fit's lines mirror the restored colours.
     for (const restyle of restyleLater) restyle();
+    // A pick can land on a colour this load handed to an unpicked line.
+    if (restyleLater.length) selection.settleAutoColors();
 
     // ---- Pass 3: ModalData → restore the modal store + fit tray card(s) ----
     // (round-5 item 13; item 7 multi-set). A saved `.dvma` may carry the fitted

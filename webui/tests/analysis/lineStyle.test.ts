@@ -188,3 +188,58 @@ test('a restored pick does not move the next set\'s automatic colours', () => {
   expect(rec(sel, 0).colors).toEqual([LINE_PALETTE[0], LINE_PALETTE[6]]);
   expect(rec(sel, 1).colors).toEqual([LINE_PALETTE[2], LINE_PALETTE[3]]);
 });
+
+test('delete, then pick, then reopen: no two lines share a colour', () => {
+  // Reviewer's repro: log A, log B, delete A (B is 2, 3); pick a colour on B;
+  // a reopen gives B fresh automatic colours (0, 1), and the pick landed on
+  // the other line's colour.
+  for (const [ch, pick] of [[0, 1], [1, 0]] as const) {
+    const { actions } = setup();
+    const a = actions.addRecordedSet(capture('A'));
+    const b = actions.addRecordedSet(capture('B'));
+    actions.removeSet(a);
+    actions.setLineStyle(b, ch, { color: LINE_PALETTE[pick] });
+    const after = reopen(actions);
+    const cols = rec(after.sel).colors;
+    expect(cols[ch]).toBe(LINE_PALETTE[pick]);
+    expect(new Set(cols).size).toBe(2);
+  }
+});
+
+test('recolouring a line whose fit covers only some lines recolours that fit line only', async () => {
+  // A fit over the lines left visible: hide ch 1 of a 3-channel set, fit ch 2.
+  // The fit card then has ONE line, mirroring source ch 2.
+  const sel = createSelection();
+  const tf2col = {
+    freq_axis: real([2], [0, 1]),
+    tf_data: cplx([2, 2], [1, 0, 2, 0, 1, 0, 2, 0]),
+    coherence: real([2, 2], [0.9, 0.9, 0.8, 0.8]),
+  };
+  const base = engine();
+  const eng = { ...base, enqueue: async (op: string) => (op === 'calc_tf' ? tf2col : base.enqueue(op)) } as EngineStore;
+  const actions = createActions(eng, sel, createAnalysisSettings(sel), createModalStore());
+  actions.loadDataset({
+    formatVersion: 2, pydvmaVersion: '2.9.1',
+    items: [{
+      kind: 'TimeData',
+      arrays: {
+        time_axis: { shape: [3], isComplex: false, data: Float64Array.from([0, 0.5, 1]) },
+        time_data: { shape: [3, 3], isComplex: false, data: Float64Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9]) },
+      },
+      meta: { test_name: 'set_0', timestring: 't0', unique_id: 'U3' },
+      settings: { fs: 2 },
+    }],
+  });
+  const id = rec(sel).id;
+  await actions.calcTf('all');
+  sel.cycleLine(id, 1); sel.cycleLine(id, 1);           // hide ch 1
+  await actions.calcFit('all', [60, 110], 'acc', 'fit', 1);
+  await new Promise((r) => setTimeout(r, 0));
+  const fit = get(sel.setsView).find((s) => s.role === 'fit')!;
+  expect(fit.nChannels).toBe(1);
+
+  actions.setLineStyle(id, 1, { color: LINE_PALETTE[8] });   // not fitted
+  expect(sel.lineColor(fit.id, 0)).toBe(LINE_PALETTE[2]);
+  actions.setLineStyle(id, 2, { color: LINE_PALETTE[9] });   // the fitted line
+  expect(sel.lineColor(fit.id, 0)).toBe(LINE_PALETTE[9]);
+});
