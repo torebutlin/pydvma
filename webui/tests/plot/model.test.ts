@@ -1283,3 +1283,31 @@ describe('acoustic display', () => {
     expect(m.lines).toHaveLength(1);
   });
 });
+
+test('a visible line\'s width reaches the time, frequency and TF lines; coherence keeps 1', () => {
+  // The tray's ⋯ pop-up picks a weight per line (2026-11-27); App passes it as
+  // `width`. An absent width keeps the long-standing 1.5 px.
+  const bold: VisibleLine = { ...vis(0, 1, 'on', '#dc2626'), width: 2.5 };
+  const sets: SetArrays[] = [{
+    setId: 0,
+    time: { axis: Float64Array.from([0, 1]), data: decodeArray(real([2, 2], [10, 20, 11, 21])) },
+    freq: { axis: Float64Array.from([1, 2]), data: decodeArray(cplx([2, 2], [1, 0, 2, 0, 3, 0, 4, 0])) },
+    tf: {
+      axis: Float64Array.from([10, 20]),
+      data: decodeArray(cplx([2, 1], [1, 0, 1, 0])),
+      coherence: decodeArray(real([2, 1], [0.9, 0.8])),
+      chIn: 0, nChannels: 2,
+    },
+  }];
+  const time = buildPlotModel({ view: 'time', sets, visible: [bold, vis(0, 0, 'on')] });
+  expect(time.lines.map((l) => l.width)).toEqual([2.5, 1.5]);
+  const freq = buildPlotModel({ view: 'frequency', freqMode: 'fft', sets, visible: [bold] });
+  expect(freq.lines[0].width).toBe(2.5);
+  for (const tfPlotType of ['mag', 'phase', 'nyquist'] as const) {
+    const tf = buildPlotModel({ view: 'tf', tfPlotType, coherence: true, sets, visible: [bold] });
+    expect(tf.lines.find((l) => l.yAxis === 'left')!.width).toBe(2.5);
+  }
+  const coh = buildPlotModel({ view: 'tf', tfPlotType: 'mag', coherence: true, sets, visible: [bold] })
+    .lines.find((l) => l.yAxis === 'right')!;
+  expect(coh.width).toBe(1);
+});

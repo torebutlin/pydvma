@@ -109,7 +109,17 @@ export interface VisibleLine {
    * visible-line pipeline. Absent/false ⇒ solid (every measured line).
    */
   dashed?: boolean;
+  /**
+   * Stroke width in px — the line's weight from the tray card's ⋯ pop-up
+   * (`LINE_WEIGHT_PX`). Absent ⇒ `DEFAULT_LINE_WIDTH`. Applies to the
+   * measured lines of every view; the overlays drawn for a line (coherence,
+   * σ, octave bands) keep their own widths.
+   */
+  width?: number;
 }
+
+/** The measured lines' long-standing stroke width, px. */
+export const DEFAULT_LINE_WIDTH = 1.5;
 
 /**
  * A set's derived arrays, already decoded from the worker marshalling.
@@ -581,7 +591,7 @@ function powDb(x: number): number {
 function baseLine(x: Float64Array, y: Float64Array, v: VisibleLine): PlotLine {
   return {
     x, y, color: v.color, opacity: OPACITY[v.state],
-    width: 1.5, dashed: false, yAxis: 'left', xMonotonic: true,
+    width: v.width ?? DEFAULT_LINE_WIDTH, dashed: false, yAxis: 'left', xMonotonic: true,
   };
 }
 
@@ -943,7 +953,7 @@ export function buildPlotModel(args: PlotModelArgs): PlotModel {
         // reconstructions arrive this way (round-7 item 6) — the old dedicated
         // `recon` overlay option (primary-set-only pink local) is gone.
         x, y, color: v.color, opacity: OPACITY[v.state],
-        width: 1.5, dashed: !!v.dashed, yAxis: 'left', xMonotonic,
+        width: v.width ?? DEFAULT_LINE_WIDTH, dashed: !!v.dashed, yAxis: 'left', xMonotonic,
         // Magnitude in dB floors log10(0) at DB_FLOOR; flag it so a DC bin
         // zeroed by an x(iω) power cannot drag the autoscale to −300 dB.
         dbY: type === 'mag' && !linMag,

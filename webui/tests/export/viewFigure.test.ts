@@ -53,4 +53,13 @@ describe('toPrintEntries', () => {
       { label: 's9', color: '#2563eb', style: 'dash', faded: false },
     ]);
   });
+  it('toPrintEntries carries a line\'s weight when it is not normal', () => {
+    const e = (setId: number, weight: 'thin' | 'normal' | 'bold') =>
+      ({ setId, ch: 1, label: `s${setId}`, color: '#2563eb', state: 'on' as TriState, weight });
+    expect(toPrintEntries([e(1, 'bold'), e(2, 'normal'), e(3, 'thin')], new Set())).toEqual([
+      { label: 's1', color: '#2563eb', style: 'line', faded: false, width: 2.5 },
+      { label: 's2', color: '#2563eb', style: 'line', faded: false },
+      { label: 's3', color: '#2563eb', style: 'line', faded: false, width: 1 },
+    ]);
+  });
 });

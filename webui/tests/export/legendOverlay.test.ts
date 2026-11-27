@@ -93,4 +93,17 @@ describe('layoutPrintLegend', () => {
   it('no entries, no legend', () => {
     expect(layoutPrintLegend({ legend: { entries: [], placement: { kind: 'best' } }, frame, canvas, belowTopPt: 240, points: [] })).toBeNull();
   });
+  it('a line drawn bold gets a bolder swatch, in proportion to the normal one', () => {
+    // The tray's ⋯ pop-up picks a line's weight (2026-11-27); `width` is its
+    // on-screen px, and normal (1.5 px, or absent) keeps the 1.6 pt swatch.
+    const widths = (entries: PrintLegendEntry[]) => [...layoutPrintLegend({
+      legend: { entries, placement: { kind: 'position', x: 0.98, y: 0.98 } }, frame, canvas, belowTopPt: 240, points: [],
+    })!.svg.matchAll(/<line [^>]*stroke-width="([\d.]+)"/g)].map((m) => Number(m[1]));
+    const [normal, bold, thin] = widths([entry('n'), { ...entry('b'), width: 2.5 }, { ...entry('t'), width: 1 }]);
+    // The SVG is in quarter points, so compare against the plain swatch.
+    expect(normal).toBeCloseTo(1.6 * 4, 2);
+    expect(bold / normal).toBeCloseTo(2.5 / 1.5, 1);   // stroke widths are written rounded
+    expect(thin / normal).toBeCloseTo(1 / 1.5, 1);
+  });
 });
+

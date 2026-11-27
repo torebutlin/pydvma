@@ -64,7 +64,12 @@ export interface PrintPane { model: PlotModel; image?: string }
 export type LegendStyle = 'line' | 'dash' | 'x' | 'o' | 'xline';
 
 /** One legend row: its label, colour and swatch; `faded` rows print lighter. */
-export interface PrintLegendEntry { label: string; color: string; style: LegendStyle; faded: boolean }
+export interface PrintLegendEntry {
+  label: string; color: string; style: LegendStyle; faded: boolean;
+  /** The line's on-screen width, px, when not the normal 1.5 (a weight picked
+   *  in the tray's ⋯ pop-up); its line swatch scales in proportion. */
+  width?: number;
+}
 
 /**
  * Where the legend goes: `'position'` takes the on-screen legend's fractions

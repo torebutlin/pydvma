@@ -32,6 +32,7 @@
  */
 import { PRINT_CHROME } from '../plot/chrome';
 import { legendWrapColumns } from '../plot/legendGrid';
+import { DEFAULT_LINE_WIDTH } from '../plot/model';
 import { FONT_ASCENT, FONT_DESCENT, measureText } from './figureFont';
 import type { PrintLegend, PrintLegendEntry, PrintText, PtBox } from './printFigure';
 import {
@@ -62,7 +63,8 @@ const BELOW_GAP_EM = 0.3;
 /** A label's baseline sits this far below its row's centre line, centring it. */
 const LABEL_MID_EM = 0.34;
 
-/** Line swatch stroke width, pt. */
+/** Line swatch stroke width for a normal-weight line, pt; an entry with a
+ *  `width` scales it by `width / DEFAULT_LINE_WIDTH`. */
 const SWATCH_STROKE_PT = 1.6;
 /** Card fill opacity, border width and corner radius, pt. */
 const CARD_FILL_OPACITY = 0.92;
@@ -292,8 +294,9 @@ function rowSvg(
   const parts: string[] = [];
   if (e.style === 'line' || e.style === 'dash' || e.style === 'xline') {
     const dash = e.style === 'dash' ? ` stroke-dasharray="${sty(DASH_PT[0])} ${sty(DASH_PT[1])}"` : '';
+    const weight = (e.width ?? DEFAULT_LINE_WIDTH) / DEFAULT_LINE_WIDTH;
     parts.push(`<line x1="${u(x0)}" y1="${u(cy)}" x2="${u(x0 + sw)}" y2="${u(cy)}" stroke="${stroke}" `
-      + `stroke-width="${sty(SWATCH_STROKE_PT)}"${dash}/>`);
+      + `stroke-width="${sty(SWATCH_STROKE_PT * weight)}"${dash}/>`);
   }
   const mx = x0 + sw / 2;
   if (e.style === 'x' || e.style === 'xline') {

@@ -33,7 +33,7 @@
   import FileDialog from './components/FileDialog.svelte';
   import { activeStage, capabilities } from './lib/stores/stages';
   import { createViewState, type ViewId } from './lib/stores/viewstate';
-  import { createSelection } from './lib/stores/selection';
+  import { createSelection, LINE_WEIGHT_PX } from './lib/stores/selection';
   import { createAnalysisSettings } from './lib/stores/analysisSettings';
   import {
     createEngineStore, journalAvailable, journalDiscardRecovered, journalGet,
@@ -1312,6 +1312,8 @@
       setId: e.setId, ch: e.ch, state: e.state === 'off' ? 'fade' : e.state, color: e.color,
       // A modal-fit pseudo-set's recon lines draw dashed (round-5 item 13).
       dashed: fitSetIds.has(e.setId),
+      // The weight picked in the tray card's ⋯ pop-up (normal = 1.5 px).
+      width: LINE_WEIGHT_PX[e.weight ?? 'normal'],
     })),
   );
 

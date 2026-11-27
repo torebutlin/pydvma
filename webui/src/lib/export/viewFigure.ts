@@ -11,6 +11,7 @@
  */
 import type { PlotModel } from '../plot/build';
 import type { LegendEntry } from '../stores/selection';
+import { LINE_WEIGHT_PX } from '../stores/selection';
 import type { ViewId } from '../stores/viewstate';
 import { clampFigureWidth } from './figureSave';
 import type { FigureKind, PrintFigureInput, PrintLegendEntry, PrintPane } from './printFigure';
@@ -21,6 +22,7 @@ import type { FigureKind, PrintFigureInput, PrintLegendEntry, PrintPane } from '
  * clicked back on, and the plot does not draw it. A modal-fit pseudo-set's
  * row (its id in `fitSetIds`) gets a dashed swatch, since its reconstruction
  * draws dashed; every other row a solid line. A `'fade'` row prints faded.
+ * A line drawn thin or bold carries its `width`, so its swatch matches.
  */
 export function toPrintEntries(entries: readonly LegendEntry[], fitSetIds: ReadonlySet<number>): PrintLegendEntry[] {
   return entries
@@ -30,6 +32,7 @@ export function toPrintEntries(entries: readonly LegendEntry[], fitSetIds: Reado
       color: e.color,
       style: fitSetIds.has(e.setId) ? 'dash' : 'line',
       faded: e.state === 'fade',
+      ...(e.weight && e.weight !== 'normal' ? { width: LINE_WEIGHT_PX[e.weight] } : {}),
     }));
 }
 
