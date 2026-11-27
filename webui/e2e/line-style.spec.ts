@@ -115,4 +115,8 @@ test('in the narrow layout the pop-up opens over the tray drawer', async ({ page
   expect(box.x + box.width).toBeLessThanOrEqual(375);
   await pop.getByTestId('line-swatch-1-2').click();
   await expect(tray.getByTestId('ch-row-1').locator('.ch-chip')).toHaveCSS('background-color', 'rgb(5, 150, 105)');
+  // Escape closes the pop-up only; the drawer stays open beneath it.
+  await page.keyboard.press('Escape');
+  await expect(pop).toHaveCount(0);
+  await expect(tray.getByTestId('line-style-open')).toBeVisible();
 });

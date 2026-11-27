@@ -30,7 +30,7 @@ export const LINE_PALETTE = [
  * back first, so no two lines share a colour until there are more than 12
  * (4C6 lab, 2026-11: log, delete, log again had given the new set a
  * survivor's colours, because the old offset counted lines, not colours).
- * A colour chosen in the tray's ⋯ panel counts like any other.
+ * A colour chosen in the tray's ⋯ pop-up counts like any other.
  */
 function leastUsedColors(present: readonly SetRecord[], n: number): string[] {
   const uses = LINE_PALETTE.map(() => 0);
@@ -75,7 +75,7 @@ export type SetRole = 'data' | 'fit';
 export const AUTO_COLLAPSE_CHANNELS = 16;
 
 /**
- * A line's weight, chosen per line in the tray card's ⋯ panel. Deliberately
+ * A line's weight, chosen per line in the tray card's ⋯ pop-up. Deliberately
  * three steps and no dash style: dashes already mean coherence and modal-fit
  * lines.
  */
@@ -456,7 +456,7 @@ export function createSelection() {
       return findSet(id)?.colors[ch];
     },
     /**
-     * Recolour line (set `id`, channel `ch`) — the tray card's ⋯ panel. The
+     * Recolour line (set `id`, channel `ch`) — the tray card's ⋯ pop-up. The
      * tray, the legend and the plot all read `colors`, so they follow. Unknown
      * id or a channel past the set's end is a no-op. The panel offers only
      * `LINE_PALETTE` colours; any `#rrggbb` is accepted here (a file may hold

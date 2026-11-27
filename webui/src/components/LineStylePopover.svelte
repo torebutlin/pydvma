@@ -85,6 +85,9 @@
     });
   });
 
+  /** Escape closes the pop-up only. Listened for in the CAPTURE phase, where
+   *  stopping it keeps it from the window's other Escape handlers (the
+   *  narrow layout's tray drawer would otherwise close too). */
   function onKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') { e.stopPropagation(); onclose(); }
   }
@@ -102,7 +105,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKeydown} onpointerdown={onPointerDown} onresize={place}
+<svelte:window onkeydowncapture={onKeydown} onpointerdown={onPointerDown} onresize={place}
   onscrollcapture={onScroll} />
 
 <div
