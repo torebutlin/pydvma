@@ -75,8 +75,27 @@ follows [semantic versioning](https://semver.org/).
   off; a double-click now goes straight between shown and hidden, so one
   line can be flashed on and off to compare it with the others (lab
   feedback). A faded line counts as shown.
+- **Pick a line's colour and thickness.** The **⋯** at the right of a
+  set's tray card opens a small pop-up: for each line, one of the app's 12
+  colours and thin, normal or bold, plus **Reset to automatic**. The plot,
+  the legend and saved figures follow; a modal fit's lines take their
+  measured line's colour. The choices are saved with the set in the
+  `.dvma` (`ui.line_colors`, `ui.line_widths`, which Python ignores), so
+  a reload or a restored session keeps them. No dashed option: dashes
+  mean coherence and fit lines.
 
 ### Fixed
+
+- **A new set could take the same colours as a set already on screen**
+  (4C6 lab). Colours were handed out by counting the lines in the tray,
+  so after a delete the next set reused a surviving set's colours: log A,
+  log B, delete A, log C, and C was drawn exactly like B. A new set now
+  takes the colours fewest lines are using, so no two lines share one
+  until there are more than 12. A file with nothing deleted opens in the
+  same colours as before.
+- A TF-only set (opened from a file with no time data) now gets its
+  renamed channels back when the file is reopened; they were saved but
+  not read.
 
 - The legend's corner presets (SE by default) sit inside the axes, 8 px
   clear of the frame, instead of over the corner tick numbers. A dragged

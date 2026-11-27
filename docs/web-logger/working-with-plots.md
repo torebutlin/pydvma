@@ -40,6 +40,13 @@ tray as a drawer; close it with its **×**, **Esc**, or a click outside.
   **Save Dataset** no longer writes it. On the **Modal fit** card the **×** clears the
   fit, and a message offers **Undo**. On a touch screen, which cannot
   hover, the **×** shows all the time.
+- The **⋯** at the right of a set's card opens its line choices: for each
+  line, a colour from the app's 12 and **thin**, **normal** or **bold**.
+  The plot, the legend and saved figures follow, and the choices are
+  saved with the set. **Reset to automatic** puts the set back. A modal
+  fit's lines take their measured line's colour. A new set always gets
+  colours that no line on screen is using, until there are more than 12
+  lines.
 - **⚠ source changed** appears on a set whose saved FFT or transfer
   function was computed from earlier time data. Click it to recompute.
 
