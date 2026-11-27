@@ -71,7 +71,9 @@ test('tray matrix ops (fixture-loaded set)', async ({ page }) => {
   await expect(card0).toBeVisible();                 // fixture loaded a set into the tray
   await card0.getByTestId('set-header').click();     // row cycle
   await page.getByTestId('chip-ch-1').click();       // column cycle
-  await card0.getByTestId('set-header').dblclick();
+  // Rename is a double-click on the NAME (the header's middle may be the
+  // badge or a gap once cal, × and ⋯ share the row on hover).
+  await card0.getByTestId('set-name').dblclick();
   await page.keyboard.type('hammer'); await page.keyboard.press('Enter');
   await expect(card0).toContainText('hammer');
 });
