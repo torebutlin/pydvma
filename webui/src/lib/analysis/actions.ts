@@ -49,7 +49,8 @@ import type { NpyArray } from '../codec/npy';
 import { signatureOfSamples } from '../codec/signature';
 import type { EngineStore } from '../stores/engine';
 import { isEngineStopped, ENGINE_STOPPED_MESSAGE, consumeEngineStopNotice } from '../stores/engine';
-import type { Selection, SetRecord, TriState } from '../stores/selection';
+import type { LineWeight, Selection, SetRecord, TriState } from '../stores/selection';
+import { isLineWeight } from '../stores/selection';
 import type { AnalysisSettings, AnalysisTarget } from '../stores/analysisSettings';
 import { autoVoicesForW0, defaults, type FreqSettings, type PerSetSettings } from '../stores/analysisSettings';
 import { decodeArray, migrateFreqMode, type DecodedArray, type MarshalledArray, type SetArrays } from '../plot/model';
@@ -271,6 +272,9 @@ export interface TfCalibrationInfo {
 
 /** Relative tolerance for "this stored TF factor is just the channel ratio". */
 const TF_RATIO_RTOL = 1e-9;
+
+/** A line colour as a file may store it (`ui.line_colors`): `#rrggbb`. */
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 /** fs from a TimeData item: prefer settings.fs, else infer from the axis. */
 function sampleRate(item: DvmaItem): number {
@@ -916,6 +920,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
     // (FreqData/TfData/CrossSpecData, linked by `id_link`) attach to the
     // right set (round-4 bug 3).
     const linkToSet = new Map<string, number>();
+    // Saved line colours / weights, applied once every set is in (`restoreLineUi`).
+    const restyleLater: (() => void)[] = [];
 
     // ---- Pass 1: TimeData items → selection sets + seeded time slice ----
     ds.items.forEach(item => {
@@ -965,15 +971,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // exactly those, applied below over the app defaults it was seeded with.
       if (settings && !ui?.analysis) settings.applyCaptureDefaults(setId);
       if (ui) {
-        // Channel labels — sparse map keyed by stringified channel index.
-        if (ui.channel_labels) {
-          for (const [chStr, label] of Object.entries(ui.channel_labels)) {
-            const ch = Number(chStr);
-            if (Number.isFinite(ch) && ch >= 0 && ch < nCh && typeof label === 'string') {
-              selection.renameChannel(setId, ch, label);
-            }
-          }
-        }
+        restoreLineUi(setId, ui, nCh, restyleLater);
         // Per-set analysis settings — merge saved partials over defaults.
         if (ui.analysis && settings) {
           if (ui.analysis.freq) {
@@ -1056,6 +1054,7 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       const name = (item.meta.test_name as string) || item.kind;
       const timestamp = (item.meta.timestring as string) || '';
       const newId = selection.addSet({ name, nChannels: nCh, durationS: 0, timestamp });
+      if (item.ui) restoreLineUi(newId, item.ui, nCh, restyleLater);
       // Kept in `working` (with the derived item as its source) so the set is
       // targetable — a loaded TF is fittable; a recompute would fail through
       // the normal guarded path (no time series), not crash.
@@ -1072,6 +1071,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
     if (append) derived.update((d) => ({ ...d, ...seed }));
     else derived.set(seed);
+    // Before pass 3, so a restored fit's lines mirror the restored colours.
+    for (const restyle of restyleLater) restyle();
 
     // ---- Pass 3: ModalData → restore the modal store + fit tray card(s) ----
     // (round-5 item 13; item 7 multi-set). A saved `.dvma` may carry the fitted
@@ -1143,6 +1144,42 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
+   * Put a loaded item's per-line `ui` back on set `setId`: channel labels
+   * (`ui.channel_labels`) and the colours and weights picked in the tray's ⋯
+   * pop-up (`ui.line_colors`, `ui.line_widths`). Each is a sparse map keyed
+   * by stringified channel index; an entry for a channel past `nCh`, a
+   * colour that is not `#rrggbb` or a weight that is not thin/normal/bold is
+   * skipped (a hand-edited or future file must still open). Used for sets
+   * opened from TimeData AND for TF-only (orphan) sets.
+   *
+   * Labels apply at once; the colours and weights are pushed onto `later`,
+   * which `loadDataset` runs once every set of the file has been added. A
+   * picked colour applied straight away would count as in use when the
+   * NEXT set's automatic colours are chosen, and that set would reopen in
+   * other colours than it was saved in.
+   */
+  function restoreLineUi(setId: number, ui: DvmaItemUi, nCh: number, later: (() => void)[]): void {
+    const each = <T>(map: Record<string, T> | undefined, fn: (ch: number, v: T) => void) => {
+      if (!map || typeof map !== 'object') return;
+      for (const [chStr, v] of Object.entries(map)) {
+        const ch = Number(chStr);
+        if (Number.isInteger(ch) && ch >= 0 && ch < nCh) fn(ch, v);
+      }
+    };
+    each(ui.channel_labels, (ch, label) => {
+      if (typeof label === 'string') selection.renameChannel(setId, ch, label);
+    });
+    each(ui.line_colors, (ch, color) => {
+      if (typeof color === 'string' && HEX_COLOR.test(color)) {
+        later.push(() => selection.setLineColor(setId, ch, color));
+      }
+    });
+    each(ui.line_widths, (ch, weight) => {
+      if (isLineWeight(weight)) later.push(() => selection.setLineWeight(setId, ch, weight));
+    });
+  }
+
+  /**
    * Write the current channel labels and per-set analysis settings onto
    * each working set's DvmaItem.ui so the next `writeDvma` persists them
    * in the manifest. Called from the save / autosave path BEFORE
@@ -1159,6 +1196,11 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       // Channel labels (sparse).
       const labels = selection.getLabelsForSet(ws.setId);
       if (labels) ui.channel_labels = labels;
+
+      // Line colours and weights picked in the tray's ⋯ pop-up (sparse).
+      const styles = selection.getLineStylesForSet(ws.setId);
+      if (styles?.line_colors) ui.line_colors = styles.line_colors;
+      if (styles?.line_widths) ui.line_widths = styles.line_widths;
 
       // x(iω) display power (round-6): persist only when non-identity.
       const iwP = get(derived)[ws.setId]?.iwPower ?? 0;
@@ -2718,7 +2760,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
       removed.push({
         item,
         index: ds && item ? ds.items.indexOf(item) : -1,
-        record: { ...record, colors: record.colors.slice() },
+        record: { ...record, colors: record.colors.slice(), widths: record.widths.slice(),
+          autoColors: record.autoColors.slice() },
         states: Array.from({ length: record.nChannels }, (_, c) => stateOf(id, c)),
         labels: selection.getLabelsForSet(id),
         ws,
@@ -2831,6 +2874,48 @@ export function createActions(engine: EngineStore, selection: Selection, setting
   }
 
   /**
+   * Change one line's colour and/or weight — the tray card's ⋯ pop-up. The
+   * selection record is what the tray, legend and plot draw from; the modal
+   * fit's lines for this set are recoloured to match (they mirror their
+   * measured line's colour, not its weight). The style reaches the document
+   * when it is written (`stampUiState`), so, as for a channel rename, a DATA
+   * set's document re-emits here to schedule the autosave and the
+   * session-journal post. A call that changes nothing emits nothing.
+   */
+  function setLineStyle(setId: number, ch: number, style: { color?: string; weight?: LineWeight }): void {
+    const before = selection.getLineStylesForSet(setId);
+    if (style.color !== undefined) selection.setLineColor(setId, ch, style.color);
+    if (style.weight !== undefined) selection.setLineWeight(setId, ch, style.weight);
+    afterRestyle(setId, before);
+  }
+
+  /** Put every line of set `setId` back to its automatic colour and normal
+   *  weight (the ⋯ pop-up's Reset); see `setLineStyle`. */
+  function resetLineStyles(setId: number): void {
+    const before = selection.getLineStylesForSet(setId);
+    selection.resetLineStyles(setId);
+    afterRestyle(setId, before);
+  }
+
+  /** Mirror set `setId`'s colours onto its fit lines and re-emit the
+   *  document when its saved styles changed. */
+  function afterRestyle(setId: number, before: ReturnType<Selection['getLineStylesForSet']>): void {
+    const fit = fitSets.get(setId);
+    if (fit) {
+      const chans = fit.chansKey === 'all'
+        ? Array.from({ length: fit.nChannels }, (_, c) => c)
+        : fit.chansKey.split(',').map(Number);
+      chans.forEach((src, c) => {
+        const color = selection.lineColor(setId, src);
+        if (color) selection.setLineColor(fit.id, c, color);
+      });
+    }
+    const after = selection.getLineStylesForSet(setId);
+    if (JSON.stringify(after) === JSON.stringify(before)) return;
+    if (working.some((w) => w.setId === setId)) dataset.update((d) => d);
+  }
+
+  /**
    * Remove a previous BLA run's sets — raw captures AND result sets — from the
    * dataset, the tray and the derived map, and offer a one-level Undo toast
    * (round-11 P6, the "replace previous run" half of the Nonlin run
@@ -2899,8 +2984,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
         const at = r.index >= 0 && r.index <= ds.items.length ? r.index : ds.items.length;
         ds.items.splice(at, 0, r.item);
       }
-      const { nChannels, durationS, timestamp, role, colors } = r.record;
-      const id = selection.addSet({ name, nChannels, durationS, timestamp, role, colors });
+      const { nChannels, durationS, timestamp, role, colors, widths, autoColors } = r.record;
+      const id = selection.addSet({ name, nChannels, durationS, timestamp, role, colors, widths, autoColors });
       selection.setLineStates(id, r.states);
       if (r.labels) {
         for (const [c, label] of Object.entries(r.labels)) selection.renameChannel(id, Number(c), label);
@@ -4524,7 +4609,8 @@ export function createActions(engine: EngineStore, selection: Selection, setting
 
   return {
     dataset, derived, computeErrors, busy, modal,
-    loadDataset, addRecordedSet, addBlaSets, removeSet, renameSet, renameChannel, removeBlaRun, undoRemoveBlaRun, stampUiState,
+    loadDataset, addRecordedSet, addBlaSets, removeSet, renameSet, renameChannel, setLineStyle,
+    resetLineStyles, removeBlaRun, undoRemoveBlaRun, stampUiState,
     materializeDerived,
     /** The "Include sonogram?" save prompt (Task 5b) — see each function. */
     sonoPromptNeeded, includeSonograms,

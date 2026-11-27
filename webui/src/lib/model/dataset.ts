@@ -20,9 +20,15 @@ export type DataKind = 'TimeData' | 'FreqData' | 'CrossSpecData' | 'TfData'
  * - `iw_power`: the x(iω) DISPLAY power (round-6 Qt-parity Scaling tool) — a
  *   per-set integer in [-2, +2] applied to the FFT/TF views at display time.
  *   Absent / 0 ⇒ identity. Webui-only display state (python ignores it).
+ * - `line_colors` / `line_widths`: the lines whose colour (`#rrggbb`) or
+ *   weight (`thin` / `normal` / `bold`) was picked in the tray card's ⋯
+ *   pop-up, sparse like `channel_labels`; an absent line keeps its automatic
+ *   colour and normal weight. Webui-only display state (python ignores it).
  */
 export interface DvmaItemUi {
   channel_labels?: Record<string, string>;
+  line_colors?: Record<string, string>;
+  line_widths?: Record<string, 'thin' | 'normal' | 'bold'>;
   iw_power?: number;
   /** Transfer-function calibration (a factor on the TF ratio itself), see
    *  `lib/model/calibration.ts` `TfCal`; written by `tfCalToUi`, read by
