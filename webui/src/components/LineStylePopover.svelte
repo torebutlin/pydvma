@@ -160,7 +160,9 @@
 <style>
   .ls-pop {
     position: fixed;
-    z-index: 60;
+    /* Above the narrow layout's tray drawer (80) it opens from, below the
+       modal dialogs (330). */
+    z-index: 90;
     width: 268px;
     max-height: min(70vh, 520px);
     display: flex;

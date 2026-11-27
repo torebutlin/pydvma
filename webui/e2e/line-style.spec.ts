@@ -96,3 +96,23 @@ test('the ⋯ stays where it is when the card is hovered', async ({ page }) => {
   expect(Math.abs(after.x - before.x)).toBeLessThan(0.5);
 });
 
+
+test('in the narrow layout the pop-up opens over the tray drawer', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/?fixture=1');
+  await page.getByTestId('rail-more').click();
+  const tray = page.getByTestId('tray');
+  await tray.getByTestId('line-style-open').click();
+  const pop = page.getByTestId('line-style-panel');
+  await expect(pop).toBeVisible();
+  // Topmost where it sits: not hidden behind the drawer.
+  const onTop = await pop.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+  });
+  expect(onTop).toBe(true);
+  const box = (await pop.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(375);
+  await pop.getByTestId('line-swatch-1-2').click();
+  await expect(tray.getByTestId('ch-row-1').locator('.ch-chip')).toHaveCSS('background-color', 'rgb(5, 150, 105)');
+});
