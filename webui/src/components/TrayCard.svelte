@@ -59,6 +59,8 @@
   import { sigFigs } from '../lib/format';
   import { tfLineLabel } from '../lib/plot/tfChannels';
   import type { DerivedKind } from '../lib/analysis/actions';
+  import type { LineWeight } from '../lib/stores/selection';
+  import LineStylePopover from './LineStylePopover.svelte';
 
   /** Human-readable label for one derived kind, for the stale badge's title. */
   const KIND_LABEL: Record<DerivedKind, string> = { freq: 'FFT', tf: 'TF', sono: 'sonogram' };
@@ -83,6 +85,8 @@
     staleKinds,
     onRederive,
     tfChIn,
+    onSetLineStyle,
+    onResetLineStyles,
   }: {
     selection: Selection;
     set: SetView;
@@ -125,7 +129,23 @@
      * lines) renders the ordinary per-channel labels.
      */
     tfChIn?: number | null;
+    /** Change one line's colour and/or weight from the ⋯ pop-up:
+     *  `actions.setLineStyle` (recolours the set's fit lines too and lets the
+     *  autosave know). Absent → no ⋯ (a modal-fit card: its lines follow
+     *  their measured line). */
+    onSetLineStyle?: (id: number, ch: number, style: { color?: string; weight?: LineWeight }) => void;
+    /** The pop-up's Reset to automatic: `actions.resetLineStyles`. */
+    onResetLineStyles?: (id: number) => void;
   } = $props();
+
+  // The ⋯ line-style pop-up (2026-11-27). It is mounted on the page body, so
+  // the card only holds whether it is open and the button it hangs from.
+  let styleOpen = $state(false);
+  let styleBtn = $state<HTMLButtonElement>();
+  function closeStyle(): void {
+    styleOpen = false;
+    styleBtn?.focus({ preventScroll: true });
+  }
 
   const stateStore = $derived(selection.state);
   const labelStore = $derived(selection.channelLabel);
@@ -231,6 +251,15 @@
   // no deferral is needed. Guarded against controls (name/input, buttons,
   // chevron, ×) and against firing mid-rename. Clears any pending title
   // cycle so a title-click-then-header-click can't double-fire.
+  /** A line's label as its row shows it (in the TF view, `out/in` and
+   *  `… (ref)`), shared by the rows and the ⋯ pop-up. */
+  function rowLabel(ch: number): string {
+    const chLab = $labelStore(set.id, ch);
+    if (tfChIn == null) return chLab;
+    if (ch === tfChIn) return `${chLab} (ref)`;
+    return tfLineLabel(set.id, ch, tfChIn, (id, c) => $labelStore(id, c));
+  }
+
   function onHeaderClick(e: MouseEvent) {
     if (editing) return;
     const t = e.target as HTMLElement;
@@ -364,6 +393,20 @@
         onclick={() => onRederive?.(staleKinds!)}
       >⚠ source changed</button>
     {/if}
+    {#if onSetLineStyle}
+      <button
+        bind:this={styleBtn}
+        type="button"
+        class="style-btn"
+        class:open={styleOpen}
+        data-testid="line-style-open"
+        title="Line colour and thickness…"
+        aria-label={`Line colour and thickness for ${set.name}`}
+        aria-haspopup="dialog"
+        aria-expanded={styleOpen}
+        onclick={() => { styleOpen = !styleOpen; }}
+      >⋯</button>
+    {/if}
     {#if onCalibrate}
       <button
         class="cal-btn"
@@ -404,9 +447,7 @@
              not just the colour chip — matches the mockup's click target. -->
         {@const chLab = $labelStore(set.id, ch)}
         {@const isTfRef = tfChIn != null && ch === tfChIn}
-        {@const rowLab = tfChIn == null ? chLab
-          : isTfRef ? `${chLab} (ref)`
-          : tfLineLabel(set.id, ch, tfChIn, (id, c) => $labelStore(id, c))}
+        {@const rowLab = rowLabel(ch)}
         <button
           type="button"
           class="ch-row"
@@ -462,6 +503,17 @@
     </div>
   {/if}
 </div>
+
+{#if styleOpen && styleBtn && onSetLineStyle}
+  <LineStylePopover
+    {set}
+    labelOf={rowLabel}
+    anchor={styleBtn}
+    onpick={(ch, style) => onSetLineStyle?.(set.id, ch, style)}
+    onreset={() => onResetLineStyles?.(set.id)}
+    onclose={closeStyle}
+  />
+{/if}
 
 <style>
   .set-card {
@@ -608,6 +660,30 @@
   }
   .set-card:hover .cal-btn {
     display: inline-flex;
+  }
+  /* Always shown (unlike cal and ×, which wait for a hover): it is the only
+     way to a line's colour, so it must be findable, but it stays quiet. */
+  .style-btn {
+    border: 1px solid transparent;
+    color: var(--muted);
+    background: transparent;
+    border-radius: 5px;
+    width: 20px;
+    height: 18px;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .style-btn:hover,
+  .style-btn.open {
+    border-color: var(--indigo);
+    color: var(--indigo);
+    background: var(--accent-soft);
   }
   .cal-btn:hover {
     border-color: var(--indigo);

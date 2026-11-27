@@ -84,6 +84,10 @@
      *  lets the autosave and session journal know. Falls back to
      *  `selection.renameChannel` if absent. */
     onRenameChannel,
+    /** A DATA set's ⋯ line-style pop-up — `actions.setLineStyle` /
+     *  `actions.resetLineStyles`. Absent → no ⋯ on any card. */
+    onSetLineStyle,
+    onResetLineStyles,
     /** Broken-chain flag store (Task 4 — `actions.staleChains`). Absent →
      *  no card ever shows the stale badge. */
     staleChains,
@@ -114,6 +118,8 @@
     onDeleteSet?: (setId: number) => void;
     onRenameSet?: (setId: number, name: string) => void;
     onRenameChannel?: (setId: number, ch: number, label: string) => void;
+    onSetLineStyle?: (setId: number, ch: number, style: { color?: string; weight?: import('../lib/stores/selection').LineWeight }) => void;
+    onResetLineStyles?: (setId: number) => void;
     staleChains?: Readable<Record<number, DerivedKind[]>>;
     onRederive?: (setId: number, kinds: readonly DerivedKind[]) => void;
     tfChIn?: (setId: number) => number | null | undefined;
@@ -377,6 +383,8 @@
             onDeleteSet={onDeleteSet ?? selection.removeSet}
             {onRenameSet}
             {onRenameChannel}
+            {onSetLineStyle}
+            {onResetLineStyles}
             onCalibrate={canCalibrate ? openCalibrate : undefined}
             channelData={channelData ? (ch) => channelData(set.id, ch) : undefined}
             staleKinds={staleMap[set.id]}

@@ -1764,6 +1764,7 @@
       <NarrowRail {selection} {modal} {monitor} {channelSeries} onDeleteFit={actions.clearFit}
         onDeleteSet={actions.removeSet} onRenameSet={actions.renameSet}
         onRenameChannel={actions.renameChannel}
+        onSetLineStyle={actions.setLineStyle} onResetLineStyles={actions.resetLineStyles}
         staleChains={actions.staleChains} onRederive={rederiveStale}
         tfChIn={view === 'tf' ? tfChInFor : undefined} />
     {:else}
@@ -1776,6 +1777,7 @@
             applyCalibration={actions.setCalFactors}
             onDeleteFit={actions.clearFit} onDeleteSet={actions.removeSet}
             onRenameSet={actions.renameSet} onRenameChannel={actions.renameChannel}
+            onSetLineStyle={actions.setLineStyle} onResetLineStyles={actions.resetLineStyles}
             staleChains={actions.staleChains} onRederive={rederiveStale}
             tfChIn={view === 'tf' ? tfChInFor : undefined}
             deviceGainRanges={deviceGainRanges} />
