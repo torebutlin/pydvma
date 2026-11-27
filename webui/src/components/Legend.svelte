@@ -86,6 +86,7 @@
    * visual, so growing the plot back restores it.
    */
   import type { LegendEntry, Selection } from '../lib/stores/selection';
+  import { LINE_WEIGHT_PX } from '../lib/stores/selection';
   import type { ViewState } from '../lib/stores/viewstate';
   import { clampLegend, type FrameInsets } from '../lib/plot/legendPos';
   import { legendGrid, legendWrapColumns } from '../lib/plot/legendGrid';
@@ -528,7 +529,9 @@
               onclick={(ev) => { if (!justDragged) selection.clickLine(e.setId, e.ch, ev.detail); }}
               ondblclick={() => { if (!justDragged) selection.dblclickLine(e.setId, e.ch); }}
             >
-              <span class="swatch" style:background={e.color}></span>
+              <!-- The key line follows the line's weight (2 × its px: normal 3 px). -->
+              <span class="swatch" style:background={e.color}
+                style:height="{2 * LINE_WEIGHT_PX[e.weight ?? 'normal']}px"></span>
               <span class="label">{e.label}</span>
             </button>
           {/each}

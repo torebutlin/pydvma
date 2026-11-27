@@ -393,20 +393,6 @@
         onclick={() => onRederive?.(staleKinds!)}
       >⚠ source changed</button>
     {/if}
-    {#if onSetLineStyle}
-      <button
-        bind:this={styleBtn}
-        type="button"
-        class="style-btn"
-        class:open={styleOpen}
-        data-testid="line-style-open"
-        title="Line colour and thickness…"
-        aria-label={`Line colour and thickness for ${set.name}`}
-        aria-haspopup="dialog"
-        aria-expanded={styleOpen}
-        onclick={() => { styleOpen = !styleOpen; }}
-      >⋯</button>
-    {/if}
     {#if onCalibrate}
       <button
         class="cal-btn"
@@ -422,6 +408,22 @@
       aria-label={fit ? 'Clear modal fit' : 'Delete set'}
       onclick={() => onDeleteSet(set.id)}
     >×</button>
+    <!-- Last in the row: cal and × appear only on hover, so anything AFTER
+         them would jump sideways under the pointer as it arrives. -->
+    {#if onSetLineStyle}
+      <button
+        bind:this={styleBtn}
+        type="button"
+        class="style-btn"
+        class:open={styleOpen}
+        data-testid="line-style-open"
+        title="Line colour and thickness…"
+        aria-label={`Line colour and thickness for ${set.name}`}
+        aria-haspopup="dialog"
+        aria-expanded={styleOpen}
+        onclick={() => { styleOpen = !styleOpen; }}
+      >⋯</button>
+    {/if}
   </div>
 
   {#if set.collapsed}

@@ -47,6 +47,8 @@ test('⋯ picks a line\'s colour and weight; Reset puts it back', async ({ page 
   const legendRow = page.getByTestId('legend').getByTestId('legend-entry')
     .filter({ hasText: 'webui fixture · ch_0' });
   await expect(legendRow.locator('.swatch')).toHaveCSS('background-color', PINK_RGB);
+  // The legend's key line is drawn bolder too (normal 3 px, bold 5 px).
+  await expect(legendRow.locator('.swatch')).toHaveCSS('height', '5px');
   // Picking a style never hides or fades the line.
   await expect(card0(page).getByTestId('ch-row-0').locator('.state-badge')).toHaveText('on');
   await expect(pop).toBeVisible();
@@ -79,3 +81,18 @@ test('a press outside the pop-up closes it; Done closes it too', async ({ page }
   await open.click();
   await expect(page.getByTestId('line-style-panel')).toHaveCount(0);
 });
+
+test('the ⋯ stays where it is when the card is hovered', async ({ page }) => {
+  // cal and × appear only on hover; a ⋯ placed before them jumped sideways as
+  // the pointer arrived, and the click landed on the header (fading the set).
+  await page.goto('/?fixture=1');
+  await expect(firstLine(page)).toBeVisible();
+  const open = card0(page).getByTestId('line-style-open');
+  await page.mouse.move(5, 5);
+  const before = (await open.boundingBox())!;
+  await card0(page).getByTestId('set-header').hover({ position: { x: 30, y: 8 } });
+  await expect(card0(page).locator('.xdel')).toBeVisible();
+  const after = (await open.boundingBox())!;
+  expect(Math.abs(after.x - before.x)).toBeLessThan(0.5);
+});
+
