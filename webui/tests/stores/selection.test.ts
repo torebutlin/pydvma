@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { expect, test, beforeEach } from 'vitest';
-import { createSelection, LINE_PALETTE } from '../../src/lib/stores/selection';
+import { createSelection, LINE_PALETTE, LINE_WEIGHT_PX } from '../../src/lib/stores/selection';
 
 let sel: ReturnType<typeof createSelection>;
 beforeEach(() => {
@@ -524,4 +524,74 @@ test('past 12 lines the least-used colours go next', () => {
   const d = s.addSet({ name: 'D', nChannels: 3, durationS: 1, timestamp: '' });
   expect([0, 1, 2].map((c) => s.lineColor(d, c)))
     .toEqual([LINE_PALETTE[4], LINE_PALETTE[5], LINE_PALETTE[0]]);
+});
+
+// ---- Per-line colour and weight (the tray card's ⋯ panel, 2026-11-27) ----
+
+test('setLineColor recolours tray, legend and lineColor', () => {
+  sel.setLineColor(0, 1, LINE_PALETTE[6]);
+  expect(sel.lineColor(0, 1)).toBe(LINE_PALETTE[6]);
+  expect(get(sel.setsView)[0].colors[1]).toBe(LINE_PALETTE[6]);
+  expect(get(sel.legendRows).find((e) => e.setId === 0 && e.ch === 1)!.color).toBe(LINE_PALETTE[6]);
+  expect(get(sel.legendEntries).find((e) => e.setId === 0 && e.ch === 1)!.color).toBe(LINE_PALETTE[6]);
+  expect(sel.lineColor(0, 0)).toBe(LINE_PALETTE[0]);            // the other line untouched
+  sel.setLineColor(99, 0, LINE_PALETTE[6]);                      // unknown id: no throw
+  sel.setLineColor(0, 5, LINE_PALETTE[6]);                       // channel past the end: ignored
+  expect(get(sel.setsView)[0].colors).toHaveLength(2);
+});
+
+test('setLineWeight shows in legendEntries.weight', () => {
+  expect(get(sel.legendEntries).every((e) => e.weight === 'normal')).toBe(true);
+  sel.setLineWeight(1, 0, 'bold');
+  const row = (id: number, ch: number) => get(sel.legendEntries).find((e) => e.setId === id && e.ch === ch)!;
+  expect(row(1, 0).weight).toBe('bold');
+  expect(row(1, 1).weight).toBe('normal');
+  expect(get(sel.legendRows).find((e) => e.setId === 1 && e.ch === 0)!.weight).toBe('bold');
+  expect(LINE_WEIGHT_PX).toEqual({ thin: 1, normal: 1.5, bold: 2.5 });
+});
+
+test('resetLineStyles restores the colours the set was given', () => {
+  const given = [sel.lineColor(1, 0), sel.lineColor(1, 1)];
+  sel.setLineColor(1, 0, LINE_PALETTE[9]);
+  sel.setLineWeight(1, 1, 'thin');
+  sel.resetLineStyles(1);
+  expect([sel.lineColor(1, 0), sel.lineColor(1, 1)]).toEqual(given);
+  expect(get(sel.setsView)[1].widths).toEqual(['normal', 'normal']);
+});
+
+test('getLineStylesForSet is sparse and undefined when untouched', () => {
+  expect(sel.getLineStylesForSet(0)).toBeUndefined();
+  sel.setLineColor(0, 1, LINE_PALETTE[7]);
+  expect(sel.getLineStylesForSet(0)).toEqual({ line_colors: { 1: LINE_PALETTE[7] } });
+  sel.setLineWeight(0, 0, 'bold');
+  expect(sel.getLineStylesForSet(0)).toEqual({
+    line_colors: { 1: LINE_PALETTE[7] }, line_widths: { 0: 'bold' } });
+  sel.setLineColor(0, 1, LINE_PALETTE[1]);                       // back to its own colour
+  sel.setLineWeight(0, 0, 'normal');
+  expect(sel.getLineStylesForSet(0)).toBeUndefined();
+  expect(sel.getLineStylesForSet(99)).toBeUndefined();
+});
+
+test('a picked colour counts as used by the next set', () => {
+  const s = createSelection();
+  const a = s.addSet({ name: 'A', nChannels: 2, durationS: 1, timestamp: '' });
+  s.setLineColor(a, 1, LINE_PALETTE[2]);
+  const b = s.addSet({ name: 'B', nChannels: 2, durationS: 1, timestamp: '' });
+  expect([s.lineColor(b, 0), s.lineColor(b, 1)]).toEqual([LINE_PALETTE[1], LINE_PALETTE[3]]);
+});
+
+test('a set re-added with its record keeps its picked styles and its own automatic colours', () => {
+  // The delete's Undo re-adds the stored record (actions.undoRemove path).
+  const s = createSelection();
+  const a = s.addSet({ name: 'A', nChannels: 2, durationS: 1, timestamp: '' });
+  s.setLineColor(a, 0, LINE_PALETTE[8]);
+  s.setLineWeight(a, 1, 'bold');
+  const rec = get(s.sets).find((x) => x.id === a)!;
+  s.removeSet(a);
+  const back = s.addSet({ name: rec.name, nChannels: 2, durationS: 1, timestamp: '',
+    colors: rec.colors, widths: rec.widths, autoColors: rec.autoColors });
+  expect(s.lineColor(back, 0)).toBe(LINE_PALETTE[8]);
+  expect(get(s.sets).find((x) => x.id === back)!.widths).toEqual(['normal', 'bold']);
+  s.resetLineStyles(back);
+  expect(s.lineColor(back, 0)).toBe(LINE_PALETTE[0]);
 });

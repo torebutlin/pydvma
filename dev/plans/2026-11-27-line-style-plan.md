@@ -130,9 +130,11 @@ current, title = colour name), `Segmented` thin/normal/bold
 (`testid` `line-weight-{ch}-{w}`); footer **Reset to automatic**
 (`line-style-reset`) and **Done** (`line-style-done`). The ⋯ button
 (`line-style-open`, title "Line colour and thickness…") sits before `cal`,
-only when `onSetLineStyle` is given (so never on fit cards); it toggles the
-panel, which renders inside the card below the header (`line-style-panel`);
-Escape closes it. Clicks inside it must not cycle the set (header guard).
+only when `onSetLineStyle` is given (so never on fit cards); it toggles a
+POP-UP (`line-style-panel`, Tore's ruling) mounted on `document.body` at the
+button's rect, clamped inside the window, closing on Escape, on a press
+outside it and the button, and on Done. Clicks inside it must not cycle
+the set.
 
 - [ ] **Step 1: Failing e2e:** open ⋯ on `tray-card-0`, click `line-swatch-0-6`
   and `line-weight-0-bold` → the first `plot-line` has `stroke=LINE_PALETTE[6]`

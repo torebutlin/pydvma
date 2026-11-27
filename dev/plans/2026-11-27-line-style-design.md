@@ -24,7 +24,11 @@ used. Fit pseudo-sets still mirror their source and take no slot.
 
 - A **⋯ on each data set's tray card** (not on a modal-fit card: fit
   lines mirror their measured line).
-- It opens a small panel inside the card, one block per line: the line's
+- It opens a **pop-up beside the ⋯** (Tore, after reading the first
+  draft: a panel inside the card makes long scrolling cards and is hard to
+  find in the narrow drawer). It is attached to the page, not the tray, so
+  the tray's scrolling cannot clip it, and it is kept on screen. One block
+  per line: the line's
   label, the **finite 12-colour palette** as swatches (current one
   ringed), and **thin / normal / bold, per line** (Tore: per line, so
   one line can stand out). **No dashed option** — dashes mean coherence
@@ -55,8 +59,9 @@ used. Fit pseudo-sets still mirror their source and take no slot.
 
 - **Per-set thickness** (one control per card): simpler, but cannot
   pick out one line. Tore chose per line.
-- **A floating popover** vs **a panel inside the card**: the tray
-  scrolls, so a popover anchored in it clips near the bottom; a panel in
-  the card cannot clip and works the same in the narrow layout. Panel
-  chosen (my call).
+- **A pop-up** vs **a panel inside the card**: I first chose the panel
+  (a pop-up anchored in the scrolling tray clips near the bottom). Tore
+  chose the pop-up: the panel lengthens the card and is awkward in the
+  narrow drawer. The clipping is avoided by mounting the pop-up on the page
+  body at the ⋯'s position, clamped to the window.
 - **Colour picker with any colour**: rejected by Tore (finite palette).

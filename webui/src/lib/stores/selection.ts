@@ -73,18 +73,44 @@ export type SetRole = 'data' | 'fit';
  * still start collapsed to keep the tray scannable.
  */
 export const AUTO_COLLAPSE_CHANNELS = 16;
+
+/**
+ * A line's weight, chosen per line in the tray card's ⋯ panel. Deliberately
+ * three steps and no dash style: dashes already mean coherence and modal-fit
+ * lines.
+ */
+export type LineWeight = 'thin' | 'normal' | 'bold';
+/** On-screen width of each weight, px (`normal` is the plot's long-standing
+ *  1.5 px). Saved figures scale these like any line width. */
+export const LINE_WEIGHT_PX: Record<LineWeight, number> = { thin: 1, normal: 1.5, bold: 2.5 };
+/** Whether `w` is a `LineWeight` (for values read from a file). */
+export function isLineWeight(w: unknown): w is LineWeight {
+  return w === 'thin' || w === 'normal' || w === 'bold';
+}
 /** Input shape for `addSet` — what the caller knows about a dataset. */
 export interface SetEntry {
   name: string; nChannels: number; durationS: number; timestamp: string;
   /** Set role (default `'data'`); `'fit'` marks a modal-fit pseudo-set. */
   role?: SetRole;
   /** Explicit line colours (used by a fit pseudo-set to MIRROR its target
-   *  set's colours so a recon line reads as "the fit of that measured line").
-   *  Omitted for data sets, which draw from the rolling palette. */
+   *  set's colours so a recon line reads as "the fit of that measured line",
+   *  and by a delete's Undo to bring a set back as it was). Omitted for a new
+   *  data set, which takes the least-used palette colours. */
   colors?: string[];
+  /** Line weights (default all `'normal'`); a delete's Undo passes them back. */
+  widths?: LineWeight[];
+  /** The colours the set was first given, which `resetLineStyles` restores.
+   *  Default: the resolved `colors`. A delete's Undo passes them back. */
+  autoColors?: string[];
 }
-/** A set as stored: input fields plus stable `id`, resolved `role`, and owned line `colors`. */
-export interface SetRecord extends SetEntry { id: number; role: SetRole; colors: string[]; }
+/**
+ * A set as stored: input fields plus stable `id`, resolved `role`, and owned
+ * per-line styles — `colors` (what is drawn), `autoColors` (what it was given)
+ * and `widths` — one entry per channel each.
+ */
+export interface SetRecord extends SetEntry {
+  id: number; role: SetRole; colors: string[]; widths: LineWeight[]; autoColors: string[];
+}
 /**
  * Render-ready view: identity (`id`) plus current ordering (`index`) and
  * two whole-set state flags. `allOff` when every line is 'off' (card
@@ -93,7 +119,11 @@ export interface SetRecord extends SetEntry { id: number; role: SetRole; colors:
  */
 export interface SetView extends SetRecord { index: number; allOff: boolean; allFade: boolean; collapsed: boolean; }
 /** One legend row. `setId` is the set's stable identity, not its position. */
-export interface LegendEntry { setId: number; ch: number; label: string; color: string; state: TriState; }
+export interface LegendEntry {
+  setId: number; ch: number; label: string; color: string; state: TriState;
+  /** The line's weight; the plot draws it `LINE_WEIGHT_PX[weight]` wide. */
+  weight: LineWeight;
+}
 
 /** The store object `createSelection()` returns (for component props). */
 export type Selection = ReturnType<typeof createSelection>;
@@ -156,6 +186,12 @@ export function createSelection() {
   const stateOf = (m: Map<string, TriState>, id: number, c: number) => m.get(key(id, c)) ?? 'on';
   const labelOf = (m: Map<string, string>, id: number, c: number) => m.get(key(id, c)) ?? `ch_${c}`;
   const findSet = (id: number) => get(sets).find(s => s.id === id);
+  /** Apply `fn` to set `id`'s record when `ch` is one of its lines. */
+  function restyle(id: number, ch: number, fn: (s: SetRecord) => SetRecord) {
+    const rec = findSet(id);
+    if (!rec || !Number.isInteger(ch) || ch < 0 || ch >= rec.nChannels) return;
+    sets.update(l => l.map(s => (s.id === id ? fn(s) : s)));
+  }
 
   function mutate(fn: (m: Map<string, TriState>) => void) {
     states.update(m => { const n = new Map(m); fn(n); return n; });
@@ -354,7 +390,12 @@ export function createSelection() {
       if (opts.hidden) {
         mutate(m => { for (let c = 0; c < entry.nChannels; c++) m.set(key(id, c), 'off'); });
       }
-      sets.update(l => [...l, { ...entry, id, role, colors }]);
+      const widths: LineWeight[] = Array.from({ length: entry.nChannels },
+        (_, c) => (isLineWeight(entry.widths?.[c]) ? entry.widths![c] : 'normal'));
+      const autoColors = entry.autoColors && entry.autoColors.length >= entry.nChannels
+        ? entry.autoColors.slice(0, entry.nChannels)
+        : colors.slice();
+      sets.update(l => [...l, { ...entry, id, role, colors, widths, autoColors }]);
       if (entry.nChannels > AUTO_COLLAPSE_CHANNELS) collapsed.update(cs => new Set(cs).add(id));
       return id;
     },
@@ -413,6 +454,50 @@ export function createSelection() {
      *  the plot model must consume. Undefined for unknown id/channel. */
     lineColor(id: number, ch: number): string | undefined {
       return findSet(id)?.colors[ch];
+    },
+    /**
+     * Recolour line (set `id`, channel `ch`) — the tray card's ⋯ panel. The
+     * tray, the legend and the plot all read `colors`, so they follow. Unknown
+     * id or a channel past the set's end is a no-op. The panel offers only
+     * `LINE_PALETTE` colours; any `#rrggbb` is accepted here (a file may hold
+     * one).
+     */
+    setLineColor(id: number, ch: number, color: string) {
+      restyle(id, ch, (s) => ({ ...s, colors: s.colors.map((c, i) => (i === ch ? color : c)) }));
+    },
+    /** Set the weight of line (set `id`, channel `ch`); see `setLineColor`. */
+    setLineWeight(id: number, ch: number, weight: LineWeight) {
+      if (!isLineWeight(weight)) return;
+      restyle(id, ch, (s) => ({ ...s, widths: s.widths.map((w, i) => (i === ch ? weight : w)) }));
+    },
+    /** Put every line of set `id` back to the colours it was given and
+     *  normal weight. */
+    resetLineStyles(id: number) {
+      sets.update(l => l.map(s => (s.id === id
+        ? { ...s, colors: s.autoColors.slice(), widths: s.widths.map((): LineWeight => 'normal') }
+        : s)));
+    },
+    /**
+     * The lines of set `id` whose style was changed, for the `.dvma` `ui`:
+     * `line_colors` where the colour differs from the one the set was given,
+     * `line_widths` where the weight is not normal, keyed by channel index
+     * (stringified). `undefined` when nothing was changed (or unknown id), so
+     * an untouched set writes no keys.
+     */
+    getLineStylesForSet(id: number):
+      { line_colors?: Record<string, string>; line_widths?: Record<string, LineWeight> } | undefined {
+      const rec = findSet(id);
+      if (!rec) return undefined;
+      const out: { line_colors?: Record<string, string>; line_widths?: Record<string, LineWeight> } = {};
+      rec.colors.forEach((c, i) => {
+        if (c.toLowerCase() !== (rec.autoColors[i] ?? '').toLowerCase()) {
+          (out.line_colors ??= {})[String(i)] = c;
+        }
+      });
+      rec.widths.forEach((w, i) => {
+        if (w !== 'normal') (out.line_widths ??= {})[String(i)] = w;
+      });
+      return out.line_colors || out.line_widths ? out : undefined;
     },
     /** Cycle one line on -> fade -> off -> on. Unknown id is a no-op. */
     cycleLine(id: number, c: number) {
@@ -633,7 +718,7 @@ export function createSelection() {
           if (st === 'off') continue;
           out.push({ setId: set.id, ch: c, state: st,
             label: `${set.name} · ${labelOf($labels, set.id, c)}`,
-            color: set.colors[c] });
+            color: set.colors[c], weight: set.widths[c] });
         }
       });
       return out;
@@ -657,7 +742,7 @@ export function createSelection() {
         for (let c = 0; c < set.nChannels; c++) {
           out.push({ setId: set.id, ch: c, state: stateOf($states, set.id, c),
             label: `${set.name} · ${labelOf($labels, set.id, c)}`,
-            color: set.colors[c] });
+            color: set.colors[c], weight: set.widths[c] });
         }
       });
       return out;
